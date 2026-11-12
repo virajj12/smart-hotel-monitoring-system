@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mobile CCTV Camera Transmitter</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f1013;
+      color: #fafafa;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      touch-action: manipulation;
+    }
+    header {
+      padding: 12px 16px;
+      background: #18191d;
+      border-bottom: 1px solid #29292e;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .badge {
+      font-size: 10px;
+      font-family: monospace;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #27272a;
+      border: 1px solid #3f3f46;
+      color: #e4e4e7;
+    }
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: rgba(39, 39, 42, 0.6);
+      border: 1px solid #3f3f46;
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #71717a;
+    }
+    .dot.live {
+      background: #10b981;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
+      animation: pulse 1.5s infinite;
+    }
+    .dot.connecting {
+      background: #f59e0b;
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+    main {
+      flex: 1;
+      position: relative;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .overlay-info {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      background: rgba(15, 16, 19, 0.8);
+      backdrop-filter: blur(8px);
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 11px;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    footer {
+      padding: 14px 16px;
+      background: #18191d;
+      border-top: 1px solid #29292e;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    button, select {
+      background: #27272a;
+      border: 1px solid #3f3f46;
+      color: #fafafa;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    button:active {
+      transform: scale(0.97);
+    }
+    button.primary {
+      background: #fafafa;
+      color: #09090b;
+      border-color: #fafafa;
+      flex: 1;
+    }
+    button.primary.active {
+      background: #ef4444;
+      color: #ffffff;
+      border-color: #ef4444;
+    }
+    select {
+      height: 40px;
+      padding: 0 10px;
+    }
+    .hint {
+      text-align: center;
+      font-size: 11px;
+      color: #a1a1aa;
+    }
+
+    /* Insecure context warning modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.9);
+      backdrop-filter: blur(10px);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-box {
+      background: #18191e;
+      border: 1px solid #383a45;
+      border-radius: 14px;
+      padding: 20px;
+      max-width: 440px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .modal-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f59e0b;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .code-pill {
+      background: #101114;
+      border: 1px solid #2d2f39;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 11px;
+      color: #e4e4e7;
+      word-break: break-all;
+    }
+    .btn-action {
+      background: #f59e0b;
+      color: #000;
+      font-weight: 700;
+      border: none;
+      padding: 10px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span>📱 MOBILE CCTV</span>
+      <span class="badge">HTTP RELAY</span>
+    </div>
+    <div class="status-pill" id="statusPill">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">STANDBY</span>
+    </div>
+  </header>
+
+  <main>
+    <video id="videoElement" autoplay playsinline muted></video>
+    <div class="overlay-info">
+      <div>STREAM: <span id="telemetryRes">--</span></div>
+      <div>FPS: <span id="telemetryFps">0</span> | BATCH: <span id="telemetryCount">0</span></div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="controls-row">
+      <button id="toggleBtn" class="primary" onclick="toggleStream()">
+        ▶ Start Streaming
+      </button>
+
+      <button onclick="switchCamera()" title="Switch Front/Back Camera">
+        🔄 Flip
+      </button>
+
+      <button id="torchBtn" onclick="toggleTorch()" style="display:none;" title="Torch Light">
+        🔦 Torch
+      </button>
+
+      <select id="resSelect" onchange="restartCamera()">
+        <option value="720">720p HD</option>
+        <option value="480">480p SD</option>
+        <option value="1080">1080p FHD</option>
+      </select>
+    </div>
+
+    <div class="hint">
+      Keep this browser tab open. Frames are sent live to your laptop.
+    </div>
+  </footer>
+
+  <!-- Insecure Context Permission Modal -->
+  <div id="securityModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-box">
+      <div class="modal-title">
+        <span>⚠️ Browser Security Requirement</span>
+      </div>
+
+      <p>
+        Mobile browsers (Chrome / Safari) disable camera access on plain <code>http://IP:PORT</code> URLs because it is not marked as a Secure Context.
+      </p>
+
+      <div style="font-weight: 600; color: #fff;">Fast 20-Second Fix (Chrome for Android):</div>
+      <ol style="padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #d4d4d8;">
+        <li>Open a new tab and paste:
+          <div class="code-pill">chrome://flags/#unsafely-treat-insecure-origin-as-secure</div>
+        </li>
+        <li>In the text box, paste this server address:
+          <div class="code-pill" id="originUrl"></div>
+        </li>
+        <li>Set the dropdown to <strong>Enabled</strong> and tap <strong>Relaunch</strong>.</li>
+        <li>Return to this page and tap <strong>Start Streaming</strong>!</li>
+      </ol>
+
+      <div style="font-weight: 600; color: #fff; margin-top: 4px;">Or Use the Free "IP Webcam" App:</div>
+      <p style="font-size: 12px; color: #a1a1aa;">
+        Install <strong>IP Webcam</strong> from Google Play Store, tap "Start server", and add its URL in your laptop dashboard!
+      </p>
+
+      <button class="btn-action" onclick="copyOrigin()">Copy Server Address</button>
+      <button onclick="document.getElementById('securityModal').style.display='none'" style="background: transparent; border: 1px solid #3f3f46; color: #a1a1aa;">
+        Close
+      </button>
+    </div>
+  </div>
+
+  <script>
+    let isStreaming = false;
+    let currentFacingMode = 'environment';
+    let currentStream = null;
+    let ws = null;
+    let canvas = document.createElement('canvas');
+    let ctx = canvas.getContext('2d');
+    let frameInterval = null;
+    let frameCount = 0;
+    let fpsCalcCount = 0;
+    let lastFpsTime = Date.now();
+    let torchOn = false;
+    let currentTrack = null;
+
+    const video = document.getElementById('videoElement');
+    const toggleBtn = document.getElementById('toggleBtn');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const telemetryRes = document.getElementById('telemetryRes');
+    const telemetryFps = document.getElementById('telemetryFps');
+    const telemetryCount = document.getElementById('telemetryCount');
+    const resSelect = document.getElementById('resSelect');
+    const torchBtn = document.getElementById('torchBtn');
+    const securityModal = document.getElementById('securityModal');
+    const originUrl = document.getElementById('originUrl');
+
+    originUrl.textContent = window.location.origin;
+
+    // Check if browser allows mediaDevices
+    function checkMediaSupport() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        securityModal.style.display = 'flex';
+        setStatus('standby', 'SECURE CONTEXT REQUIRED');
+        return false;
+      }
+      return true;
+    }
+
+    // Run check on load
+    window.addEventListener('DOMContentLoaded', () => {
+      checkMediaSupport();
+    });
+
+    function copyOrigin() {
+      navigator.clipboard.writeText(window.location.origin).then(() => {
+        alert('Copied origin: ' + window.location.origin);
+      });
+    }
+
+    function connectWebSocket() {
+      const loc = window.location;
+      const wsProtocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${loc.host}/ws/stream`;
+
+      ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        if (isStreaming) {
+          setStatus('live', 'TRANSMITTING');
+        }
+      };
+
+      ws.onclose = () => {
+        if (isStreaming) {
+          setStatus('connecting', 'RECONNECTING');
+          setTimeout(connectWebSocket, 1500);
+        } else {
+          setStatus('standby', 'DISCONNECTED');
+        }
+      };
+
+      ws.onerror = (e) => {
+        console.warn('WS error', e);
+      };
+    }
+
+    async function startCamera() {
+      if (!checkMediaSupport()) return false;
+
+      const targetHeight = parseInt(resSelect.value) || 720;
+      const constraints = {
+        audio: false,
+        video: {
+          facingMode: { ideal: currentFacingMode },
+          width: { ideal: Math.round(targetHeight * (16 / 9)) },
+          height: { ideal: targetHeight },
+          frameRate: { ideal: 30, max: 30 }
+        }
+      };
+
+      try {
+        if (currentStream) {
+          currentStream.getTracks().forEach(t => t.stop());
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        currentStream = stream;
+        video.srcObject = stream;
+        await video.play();
+
+        currentTrack = stream.getVideoTracks()[0];
+
+        // Torch support check
+        const capabilities = currentTrack.getCapabilities ? currentTrack.getCapabilities() : {};
+        if (capabilities.torch) {
+          torchBtn.style.display = 'flex';
+        } else {
+          torchBtn.style.display = 'none';
+        }
+
+        const settings = currentTrack.getSettings ? currentTrack.getSettings() : {};
+        telemetryRes.textContent = `${settings.width || video.videoWidth || '?'}x${settings.height || video.videoHeight || '?'}`;
+
+        return true;
+      } catch (err) {
+        alert('Camera Access Error: ' + err.message);
+        setStatus('standby', 'PERMISSION DENIED');
+        return false;
+      }
+    }
+
+    function startFramePipeline() {
+      if (frameInterval) clearInterval(frameInterval);
+
+      // Target ~25 FPS (40ms interval)
+      frameInterval = setInterval(() => {
+        if (!isStreaming || !ws || ws.readyState !== WebSocket.OPEN) return;
+        if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        canvas.toBlob((blob) => {
+          if (!blob || !isStreaming || ws.readyState !== WebSocket.OPEN) return;
+          blob.arrayBuffer().then((buf) => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(buf);
+              frameCount++;
+              fpsCalcCount++;
+              telemetryCount.textContent = frameCount;
+
+              const now = Date.now();
+              if (now - lastFpsTime >= 1000) {
+                const currentFps = Math.round((fpsCalcCount * 1000) / (now - lastFpsTime));
+                telemetryFps.textContent = currentFps;
+                fpsCalcCount = 0;
+                lastFpsTime = now;
+              }
+            }
+          });
+        }, 'image/jpeg', 0.65);
+      }, 40);
+    }
+
+    async function toggleStream() {
+      if (!isStreaming) {
+        setStatus('connecting', 'STARTING');
+        const ok = await startCamera();
+        if (!ok) return;
+
+        isStreaming = true;
+        toggleBtn.textContent = '⏹ Stop Streaming';
+        toggleBtn.classList.add('active');
+        connectWebSocket();
+        startFramePipeline();
+        setStatus('live', 'TRANSMITTING');
+      } else {
+        isStreaming = false;
+        toggleBtn.textContent = '▶ Start Streaming';
+        toggleBtn.classList.remove('active');
+        if (frameInterval) clearInterval(frameInterval);
+        if (ws) ws.close();
+        if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+        setStatus('standby', 'STANDBY');
+      }
+    }
+
+    async function switchCamera() {
+      currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+      if (isStreaming) {
+        await startCamera();
+      }
+    }
+
+    async function restartCamera() {
+      if (isStreaming) {
+        await startCamera();
+      }
+    }
+
+    async function toggleTorch() {
+      if (!currentTrack) return;
+      try {
+        torchOn = !torchOn;
+        await currentTrack.applyConstraints({
+          advanced: [{ torch: torchOn }]
+        });
+        torchBtn.style.background = torchOn ? '#f59e0b' : '#27272a';
+        torchBtn.style.color = torchOn ? '#000' : '#fafafa';
+      } catch (err) {
+        console.warn('Torch toggle error', err);
+      }
+    }
+
+    function setStatus(state, text) {
+      statusDot.className = 'dot ' + (state === 'live' ? 'live' : state === 'connecting' ? 'connecting' : '');
+      statusText.textContent = text;
+    }
+  </script>
+</body>
+</html>

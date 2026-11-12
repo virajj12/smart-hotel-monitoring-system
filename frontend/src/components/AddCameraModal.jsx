@@ -37,7 +37,7 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
   const [rtspPath, setRtspPath] = useState('/live');
 
   // Other types
-  const [httpUrl, setHttpUrl] = useState('http://192.168.1.100:8080/video');
+  const [httpUrl, setHttpUrl] = useState('http://127.0.0.1:8080/video');
   const [webcamIndex, setWebcamIndex] = useState('0');
   const [filePath, setFilePath] = useState('demo1.mp4');
 
@@ -49,8 +49,14 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
   useEffect(() => {
     if (RTSP_PRESETS[brand]) {
       setRtspPath(RTSP_PRESETS[brand].path);
-      if (brand === 'mobile') setPort('8080');
-      else setPort('554');
+      if (brand === 'mobile') {
+        setPort('8080');
+        setUsername('');
+        setPassword('');
+      } else {
+        setPort('554');
+        if (!username) setUsername('admin');
+      }
     }
   }, [brand]);
 
@@ -59,7 +65,18 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
       const auth = username && password ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : '';
       return `rtsp://${auth}${ip}:${port}${rtspPath.startsWith('/') ? rtspPath : `/${rtspPath}`}`;
     }
-    if (sourceType === 'http') return httpUrl;
+    if (sourceType === 'http') {
+      let url = httpUrl.trim();
+      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+        try {
+          const parsed = new URL(url);
+          if (parsed.pathname === '' || parsed.pathname === '/') {
+            url = url.replace(/\/$/, '') + '/video';
+          }
+        } catch (e) {}
+      }
+      return url;
+    }
     if (sourceType === 'webcam') return webcamIndex;
     if (sourceType === 'file') return filePath;
     return '';
@@ -227,16 +244,25 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
           )}
 
           {sourceType === 'http' && (
-            <div className="space-y-1 p-3 rounded-lg border border-zinc-800 bg-zinc-900/50">
-              <Label className="text-xs text-zinc-300">HTTP / MJPEG Stream URL</Label>
+            <div className="space-y-2 p-3 rounded-lg border border-zinc-800 bg-zinc-900/50">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-zinc-300">HTTP / MJPEG Stream URL</Label>
+                <button
+                  type="button"
+                  onClick={() => setHttpUrl('http://127.0.0.1:8080/video')}
+                  className="text-[10px] text-zinc-400 hover:text-white underline font-mono"
+                >
+                  Use Mobile Server (8080)
+                </button>
+              </div>
               <Input
                 value={httpUrl}
                 onChange={(e) => setHttpUrl(e.target.value)}
-                placeholder="http://192.168.1.100:8080/video"
+                placeholder="http://127.0.0.1:8080/video"
                 className="h-8 text-xs bg-zinc-900 border-zinc-800 text-white font-mono"
               />
               <p className="text-[11px] text-zinc-400">
-                Use with apps like IP Webcam Android (`http://IP:8080/video`).
+                Works with <code>mobile_stream_server</code> (<code>http://127.0.0.1:8080/video</code>) or apps like IP Webcam Android.
               </p>
             </div>
           )}

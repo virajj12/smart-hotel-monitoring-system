@@ -3,6 +3,7 @@ Multi-camera management with per-camera processing threads.
 Each camera runs YOLO inference independently and reports violations via callback.
 """
 
+import os
 import threading
 import time
 import uuid
@@ -102,8 +103,14 @@ class CameraStream:
                 return int(self.source)
             except (ValueError, TypeError):
                 return 0
-        # RTSP, HTTP, file → string path/URL
-        return str(self.source)
+        src = str(self.source).strip()
+        # Auto-append /video for IP Webcam / HTTP stream endpoints if path omitted
+        if self.source_type == "http" and src.startswith("http"):
+            import urllib.parse
+            parsed = urllib.parse.urlparse(src)
+            if not parsed.path or parsed.path == "/":
+                src = src.rstrip("/") + "/video"
+        return src
 
     def _connect(self) -> bool:
         """Open VideoCapture and verify we can read a frame."""
@@ -446,16 +453,30 @@ class CameraManager:
                 except (ValueError, TypeError):
                     cap_source = 0
             else:
-                cap_source = str(source)
+                cap_source = str(source).strip()
+                # Auto-append /video for IP Webcam / HTTP stream endpoints if path omitted
+                if source_type == "http" and cap_source.startswith("http"):
+                    import urllib.parse
+                    parsed = urllib.parse.urlparse(cap_source)
+                    if not parsed.path or parsed.path == "/":
+                        cap_source = cap_source.rstrip("/") + "/video"
 
+            # Set short timeout so UI doesn't hang on bad RTSP/HTTP
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;3000000"
             cap = cv2.VideoCapture(cap_source)
+            try:
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 4000)
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 4000)
+            except Exception:
+                pass
+
             if not cap.isOpened():
-                result["error"] = "Failed to open video source"
+                result["error"] = "Failed to open video source. Please check the IP, port, and credentials."
                 return result
 
             ret, frame = cap.read()
             if not ret or frame is None:
-                result["error"] = "Connected but failed to read frame"
+                result["error"] = "Connected to host, but failed to retrieve frame stream."
                 cap.release()
                 return result
 
