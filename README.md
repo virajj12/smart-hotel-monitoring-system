@@ -90,27 +90,107 @@ Smart-hotel-monitoring-system/
 
 ## ⚙️ Quick Start Guide
 
-### 1. Python Environment & Dependencies
+### Prerequisites
+* **Python**: 3.10 or higher
+* **Node.js**: 18.x or higher (with `npm`)
 
-Install required backend packages:
+---
+
+### Option A: Production Mode (All-in-One FastAPI Serving React)
+
+FastAPI serves the pre-compiled, high-performance React bundle directly from `frontend/dist/` at `http://127.0.0.1:8000`.
+
+#### 1. Install Backend Dependencies
 ```bash
 pip install fastapi ultralytics opencv-python uvicorn jinja2
 ```
 
-### 2. Run the Surveillance Server
+#### 2. Install Frontend Dependencies & Build Bundle
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
+*(The build outputs optimized assets to `frontend/dist/assets/` and updates `frontend/dist/index.html`).*
 
-Start the application with Uvicorn:
+#### 3. Start the Surveillance Server
 ```bash
 python -m uvicorn main:app --reload
 ```
 
-Open your browser and navigate to:
+#### 4. Open the Surveillance Dashboard
+Navigate to:
 ```
 http://127.0.0.1:8000
 ```
-FastAPI automatically serves the dedicated React application from `frontend/dist/`.
 
-*(Optional: For frontend hot-reloading development, run `cd frontend && npm run dev` on `http://localhost:3000`).*
+---
+
+### Option B: Frontend Development Mode (Hot-Reloading with Vite)
+
+When modifying React components, styles, or modals, run the Vite development server for instant hot module replacement (HMR).
+
+#### Terminal 1 — Start Backend Server (Port 8000):
+```bash
+python -m uvicorn main:app --reload
+```
+
+#### Terminal 2 — Start Frontend Dev Server (Port 3000):
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+#### Access Developer Dashboard:
+Open your browser to:
+```
+http://localhost:3000
+```
+> **How it works**: The Vite development server runs on port 3000 and automatically proxies all API calls, video streams, telemetry, and snapshot images to `http://127.0.0.1:8000` via [frontend/vite.config.js](frontend/vite.config.js).
+
+---
+
+### 💻 Frontend Commands Reference
+
+Run these commands inside the `frontend/` directory:
+
+| Command | Description |
+| :--- | :--- |
+| `npm install` | Installs all React 19, Radix UI, Tailwind CSS, and chart dependencies. |
+| `npm run dev` | Launches the local Vite development server with HMR on `http://localhost:3000`. |
+| `npm run build` | Compiles production-ready minified JS & CSS into `frontend/dist/`. |
+| `npm run preview` | Spins up a local static server to preview the production build in `dist/`. |
+| `npm run lint` | Runs fast Oxlint checks across the codebase. |
+
+> **Syncing Production Builds**: Whenever you run `npm run build`, copy the generated `index.html` to the backend template folder:
+> ```powershell
+> Copy-Item frontend\dist\index.html templates\index.html -Force
+> ```
+
+---
+
+### 📱 Connecting Mobile Phone as a CCTV Camera
+
+You can turn any smartphone on the same Wi-Fi network into a wireless CCTV feed:
+
+#### Method 1: Using IP Webcam (Android / iOS)
+1. Install **IP Webcam** (Android) or similar RTSP/MJPEG app on your mobile phone.
+2. Ensure phone and laptop are connected to the same Wi-Fi network.
+3. Open IP Webcam on your phone and tap **Start Server** at the bottom.
+4. Note the IP address displayed on the screen (e.g., `http://192.168.1.15:8080`).
+5. In the Hotel Monitoring dashboard, click **+ Add Stream**:
+   * Choose **HTTP Stream**.
+   * Enter `http://<PHONE_IP>:8080/video` (the app also auto-appends `/video` if omitted).
+   * Click **Test Connection** → **Add Camera Stream**.
+
+#### Method 2: Using the Dedicated Mobile Stream Server
+A standalone lightweight mobile capture server is included in `mobile_stream_server/`:
+```bash
+python mobile_stream_server/server.py
+```
+* Open the mobile transmitter URL on your phone's browser, allow camera permissions, and stream directly into the dashboard.
 
 ---
 

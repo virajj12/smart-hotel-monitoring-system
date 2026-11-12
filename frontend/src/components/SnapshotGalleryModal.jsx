@@ -92,7 +92,18 @@ export default function SnapshotGalleryModal({
             </div>
           ) : (
             filtered.map((item) => {
-              const imgUrl = item.snapshot ? (item.snapshot.startsWith('/') ? item.snapshot : `/snapshots/${item.snapshot}`) : null;
+              const raw = item.url || item.snapshot || (item.filename ? `/snapshots/${item.filename}` : item.snapshot_path);
+              let imgUrl = null;
+              if (raw) {
+                const normalized = String(raw).replace(/\\/g, '/');
+                if (normalized.startsWith('/')) {
+                  imgUrl = normalized;
+                } else if (normalized.startsWith('snapshots/')) {
+                  imgUrl = `/${normalized}`;
+                } else {
+                  imgUrl = `/snapshots/${normalized}`;
+                }
+              }
               const isPest = item.category === 'pest';
               const title = LABEL_MAP[item.label] || item.label;
 
@@ -108,12 +119,20 @@ export default function SnapshotGalleryModal({
                         src={imgUrl}
                         alt={title}
                         className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                          if (e.currentTarget.nextElementSibling) {
+                            e.currentTarget.nextElementSibling.style.display = 'flex';
+                          }
+                        }}
                       />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-zinc-600 text-xs">
-                        No Preview
-                      </div>
-                    )}
+                    ) : null}
+                    <div 
+                      className="w-full h-full flex items-center justify-center text-zinc-600 text-xs" 
+                      style={{ display: imgUrl ? 'none' : 'flex' }}
+                    >
+                      No Preview
+                    </div>
 
                     <div className="absolute top-2 left-2 flex gap-1">
                       <Badge variant={isPest ? "destructive" : "warning"} className="h-4 px-1.5 py-0 text-[9px] font-bold">

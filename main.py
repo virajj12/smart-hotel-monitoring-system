@@ -753,12 +753,22 @@ def get_snapshots_list(camera_id: Optional[str] = None, label: Optional[str] = N
     items = []
     for v in violations:
         path = v.get("snapshot_path", "")
+        fname = os.path.basename(path) if path else ""
+        resolved_path = None
         if path and os.path.exists(path):
+            resolved_path = path
+        elif fname and os.path.exists(os.path.join("snapshots", fname)):
+            resolved_path = os.path.join("snapshots", fname)
+
+        if resolved_path:
             c_id = v.get("camera_id", "")
+            filename = os.path.basename(resolved_path)
             items.append({
                 "id": v["id"],
-                "filename": os.path.basename(path),
-                "url": f"/snapshots/{os.path.basename(path)}",
+                "filename": filename,
+                "url": f"/snapshots/{filename}",
+                "snapshot": f"/snapshots/{filename}",
+                "snapshot_path": resolved_path.replace("\\", "/"),
                 "label": v["label"],
                 "category": "pest" if v["label"] in PESTS else "hygiene",
                 "camera_name": cam_map.get(c_id, c_id),

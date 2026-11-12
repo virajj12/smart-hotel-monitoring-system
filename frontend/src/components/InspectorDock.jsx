@@ -237,8 +237,18 @@ export default function InspectorDock({
                 const isPest = PESTS.includes(rawLabel);
                 const title = LABEL_MAP[rawLabel] || rawLabel;
                 const camName = log.camera_name || log.camera_id || 'Kitchen';
-                const snapshot = log.snapshot || log.snapshot_path;
-                const snapshotUrl = snapshot ? (snapshot.startsWith('/') ? snapshot : `/snapshots/${snapshot}`) : null;
+                const rawSnap = log.snapshot || log.snapshot_path;
+                let snapshotUrl = null;
+                if (rawSnap) {
+                  const normSnap = String(rawSnap).replace(/\\/g, '/');
+                  if (normSnap.startsWith('/')) {
+                    snapshotUrl = normSnap;
+                  } else if (normSnap.startsWith('snapshots/')) {
+                    snapshotUrl = `/${normSnap}`;
+                  } else {
+                    snapshotUrl = `/snapshots/${normSnap}`;
+                  }
+                }
 
                 return (
                   <div
