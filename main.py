@@ -6,7 +6,8 @@ and real-time web dashboard.
 """
 
 from fastapi import FastAPI, Request, HTTPException, Body
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from ultralytics import YOLO
@@ -23,17 +24,40 @@ import io
 import json
 import urllib.request
 import urllib.parse
+import mimetypes
 from typing import Optional, List, Dict, Any
+
+# Ensure proper MIME types on Windows (prevents Chrome strict MIME type error on module scripts)
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 from database import Database
 from camera_manager import CameraManager, VIOLATIONS, PESTS
 
 app = FastAPI(title="Smart Hotel Monitoring System")
+
+# Enable CORS for local Vite dev server (e.g. port 3000 / 5173)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 templates = Jinja2Templates(directory="templates")
 
 # Folder to save snapshot images for emails & dashboard
 os.makedirs("snapshots", exist_ok=True)
 app.mount("/snapshots", StaticFiles(directory="snapshots"), name="snapshots")
+
+# Mount dedicated React UI static build assets
+FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+assets_dir = os.path.join(FRONTEND_DIST, "assets")
+os.makedirs(assets_dir, exist_ok=True)
+app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
 # Database & AI Model
 db = Database("hotel_monitoring.db")
@@ -182,8 +206,8 @@ def startup_event():
     saved_cameras = db.list_cameras()
     if not saved_cameras:
         # Auto-seed a default camera so the dashboard has an active feed out of the box
-        default_source = "demo.mp4" if os.path.exists("demo.mp4") else "0"
-        default_type = "file" if os.path.exists("demo.mp4") else "webcam"
+        default_source = "demo1.mp4" if os.path.exists("demo1.mp4") else ("demo.mp4" if os.path.exists("demo.mp4") else "0")
+        default_type = "file" if (os.path.exists("demo1.mp4") or os.path.exists("demo.mp4")) else "webcam"
         try:
             db.add_camera(
                 camera_id="cam_main",
@@ -223,8 +247,29 @@ def shutdown_event():
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    """Main multi-camera CCTV monitoring dashboard."""
-    return templates.TemplateResponse(request=request, name="index.html")
+    """Serve dedicated React + shadcn UI dashboard."""
+    react_index = os.path.join(FRONTEND_DIST, "index.html")
+    if os.path.exists(react_index):
+        with open(react_index, "r", encoding="utf-8") as f:
+            return HTMLResponse(
+                content=f.read(),
+                status_code=200,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
+            )
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
+    )
+
+
+@app.get("/favicon.svg")
+def get_favicon():
+    """Serve React app favicon."""
+    fav = os.path.join(FRONTEND_DIST, "favicon.svg")
+    if os.path.exists(fav):
+        return FileResponse(fav)
+    raise HTTPException(status_code=404, detail="Favicon not found")
 
 
 # ── Camera Management API ───────────────────────────────────────────

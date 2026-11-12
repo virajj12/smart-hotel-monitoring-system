@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Pure monotonous Ash Grey & Crisp White Theme */
+    --background: 240 5% 6%;          /* #0f0f12 - Deep dark ash carbon background */
+    --foreground: 0 0% 98%;           /* #fafafa - Crisp pure white text */
+    --card: 240 4% 10%;               /* #18181c - Matte ash grey card background */
+    --card-foreground: 0 0% 98%;      /* #fafafa - White card text */
+    --popover: 240 4% 10%;            /* #18181c - Popover ash background */
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;              /* Pure white active state / primary */
+    --primary-foreground: 240 5% 10%; /* Dark text on white buttons */
+    --secondary: 240 4% 15%;          /* #242429 - Muted ash grey secondary surface */
+    --secondary-foreground: 0 0% 90%; /* Ash white text */
+    --muted: 240 4% 14%;              /* #212126 - Subtle ash background */
+    --muted-foreground: 240 5% 65%;   /* #a1a1aa - Clear readable ash grey */
+    --accent: 240 4% 18%;             /* #2b2b31 - Ash accent surface */
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 84% 60%;         /* Vibrant alert red ONLY where required */
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 4% 17%;             /* #29292e - Clean ash grey border */
+    --input: 240 4% 17%;
+    --ring: 0 0% 80%;
+    --radius: 0.625rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom Scrollbars in clean ash grey */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+@keyframes pulseRed {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.9); }
+}
+
+@keyframes pulseGreen {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.9); }
+}

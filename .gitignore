@@ -1,1 +1,6 @@
 /snapshots
+runs/
+*.backup_*
+datasets/
+__pycache__/
+*.pt.backup*
