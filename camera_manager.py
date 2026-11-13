@@ -21,6 +21,9 @@ DEFAULT_AMFV_WINDOW = 2
 DEFAULT_AMFV_THRESHOLD_PEST = 0.2
 DEFAULT_AMFV_THRESHOLD_HYGIENE = 0.4
 
+# Shared lock to serialize YOLO inference across concurrent camera threads
+_MODEL_INFERENCE_LOCK = threading.Lock()
+
 
 class CameraStream:
     """Manages a single camera's capture, inference, and AMFV state."""
@@ -160,8 +163,9 @@ class CameraStream:
 
     def _process_frame(self, frame: np.ndarray) -> np.ndarray:
         """Run YOLO inference, update AMFV windows, fire violation callbacks."""
-        results = self.model(frame, verbose=False)
-        annotated = results[0].plot()
+        with _MODEL_INFERENCE_LOCK:
+            results = self.model(frame, verbose=False)
+            annotated = results[0].plot()
 
         # Collect detected violations with max confidence per class
         detected: Dict[str, float] = {}
@@ -241,7 +245,11 @@ class CameraStream:
                     continue
 
             t0 = time.time()
-            annotated = self._process_frame(frame)
+            try:
+                annotated = self._process_frame(frame)
+            except Exception as e:
+                print(f"[Camera {self.camera_id}] Inference error: {e}")
+                annotated = frame.copy()
             elapsed = time.time() - t0
             self._fps_window.append(elapsed)
 

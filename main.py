@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from ultralytics import YOLO
 import cv2
+import numpy as np
 from datetime import datetime
 import smtplib
 from email.message import EmailMessage
@@ -63,6 +64,14 @@ app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 db = Database("hotel_monitoring.db")
 model = YOLO("best.pt")
 
+# Warm up model to fuse layers and initialize predictor before camera threads launch
+try:
+    dummy_frame = np.zeros((320, 320, 3), dtype=np.uint8)
+    model(dummy_frame, verbose=False)
+    print("✅ YOLOv8 model initialized and fused successfully.")
+except Exception as e:
+    print(f"⚠️ Model warmup warning: {e}")
+
 # System tracking
 system_start_time = time.time()
 
@@ -103,11 +112,18 @@ def send_alert_email(label: str, timestamp: str, image_path: str, camera_name: s
             filename=f"{camera_name}_{label}_{safe_ts}.jpg",
         )
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.login(sender, password)
-            smtp.send_message(msg)
-
-        print(f"[{timestamp}] ✅ Alert email sent for {label} on {camera_name} to {receiver}")
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as smtp:
+                smtp.login(sender, password)
+                smtp.send_message(msg)
+            print(f"[{timestamp}] ✅ Alert email sent for {label} on {camera_name} to {receiver}")
+        except Exception:
+            # Fallback to STARTTLS (port 587)
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as smtp:
+                smtp.starttls()
+                smtp.login(sender, password)
+                smtp.send_message(msg)
+            print(f"[{timestamp}] ✅ Alert email sent via STARTTLS for {label} on {camera_name} to {receiver}")
     except Exception as e:
         print(f"❌ Failed to send alert email: {e}")
 
@@ -195,14 +211,32 @@ def on_violation(
         daemon=True,
     ).start()
 
+    # Forward violation & snapshot to Central Fleet Server
+    if edge_sync:
+        threading.Thread(
+            target=edge_sync.forward_incident,
+            args=(camera_id, camera_name, label, timestamp, confidence, ratio, snapshot_path),
+            daemon=True,
+        ).start()
+
 
 # Initialize CameraManager with YOLO model and callback
 camera_manager = CameraManager(model=model, on_violation=on_violation)
+
+# Edge-to-Central Fleet Synchronization Client
+from edge_sync import EdgeSyncClient
+edge_sync = EdgeSyncClient(db=db, camera_manager=camera_manager)
 
 
 @app.on_event("startup")
 def startup_event():
     """Load enabled cameras from the database and start streaming."""
+    # Start background edge synchronization with Central Fleet Server
+    try:
+        edge_sync.start()
+    except Exception as e:
+        print(f"⚠️ [Edge Sync] Start warning: {e}")
+
     saved_cameras = db.list_cameras()
     if not saved_cameras:
         # Auto-seed a default camera so the dashboard has an active feed out of the box
