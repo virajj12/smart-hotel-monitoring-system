@@ -8,6 +8,7 @@ local ledger is only marked as synced after the central server acknowledges it.
 """
 
 import base64
+import hashlib
 import json
 import os
 import platform
@@ -16,7 +17,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 
 import cv2
 import websocket
@@ -36,6 +38,26 @@ class EdgeSyncManager:
     MAX_BATCH_SNAPSHOT_BYTES = 2 * 1024 * 1024
     DEFAULT_OWNER_ID = "OWN-DEFAULT-SYSTEM"
     AUTO_SYNC_THRESHOLD = 5
+    IDENTITY_FILE = ".edge_identity.json"
+
+    @classmethod
+    def get_hardware_fingerprint(cls) -> str:
+        """Deterministic hardware fingerprint unique to this physical machine."""
+        parts = [
+            str(uuid.getnode()),
+            platform.node(),
+            platform.machine(),
+            platform.system(),
+        ]
+        try:
+            if platform.system() == "Windows":
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as key:
+                    guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+                    parts.append(str(guid))
+        except Exception:
+            pass
+        return hashlib.sha256(":".join(parts).encode("utf-8")).hexdigest()[:24].upper()
 
     def __init__(self, db, camera_manager):
         self.db = db
@@ -60,6 +82,9 @@ class EdgeSyncManager:
         self.pending_request_id = self.db.get_setting("pending_request_id", "") or ""
         self.pending_pin = self.db.get_setting("pending_pin", "") or ""
 
+        # Load & sync persistent identity from .edge_identity.json (git-ignored)
+        self._load_persistent_identity()
+
         self.running = False
         self._thread = None
         self._enrollment_thread = None
@@ -77,6 +102,64 @@ class EdgeSyncManager:
         self._backoff = 2
         self._last_error = ""
         self._last_sync_result = None
+
+    def _load_persistent_identity(self):
+        """Loads and synchronizes the persistent device identity from .edge_identity.json and SQLite."""
+        identity = {}
+        if os.path.exists(self.IDENTITY_FILE):
+            try:
+                with open(self.IDENTITY_FILE, "r", encoding="utf-8") as f:
+                    identity = json.load(f)
+            except Exception as e:
+                print(f"[Edge Sync] Warning reading {self.IDENTITY_FILE}: {e}")
+
+        # Deterministic machine hardware fingerprint
+        hw_fp = identity.get("hardware_fingerprint") or self.get_hardware_fingerprint()
+        dev_uuid = identity.get("device_uuid") or str(uuid.uuid4())
+        self.hardware_fingerprint = hw_fp
+        self.device_uuid = dev_uuid
+
+        # Prioritize identity file if SQLite was wiped or empty, otherwise sync
+        persisted_kitchen_id = identity.get("kitchen_id") or self.kitchen_id
+        persisted_auth_token = identity.get("auth_token") or self.auth_token
+        persisted_central_url = identity.get("central_url") or self.central_url
+
+        self.kitchen_id = persisted_kitchen_id
+        self.auth_token = persisted_auth_token
+        if persisted_central_url:
+            self.central_url = persisted_central_url
+
+        # Sync back to SQLite settings so both stay in lockstep
+        if self.kitchen_id:
+            self.db.set_setting("kitchen_id", self.kitchen_id)
+        if self.auth_token:
+            self.db.set_setting("auth_token", self.auth_token)
+        if self.central_url:
+            self.db.set_setting("central_url", self.central_url)
+        self.db.set_setting("hardware_fingerprint", self.hardware_fingerprint)
+
+        # Write out any newly resolved identity fields
+        self._save_persistent_identity()
+
+    def _save_persistent_identity(self):
+        """Atomically saves the persistent device identity to .edge_identity.json (git-ignored)."""
+        data = {
+            "device_uuid": getattr(self, "device_uuid", ""),
+            "hardware_fingerprint": getattr(self, "hardware_fingerprint", ""),
+            "kitchen_id": self.kitchen_id,
+            "auth_token": self.auth_token,
+            "central_url": self.central_url,
+            "owner_id": self.owner_id,
+            "hotel_name": self.hotel_name,
+            "kitchen_name": self.kitchen_name,
+            "location": self.location,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            with open(self.IDENTITY_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"[Edge Sync] Failed to save {self.IDENTITY_FILE}: {e}")
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
@@ -134,11 +217,16 @@ class EdgeSyncManager:
             payload["kitchen_id"] = self.kitchen_id
         if self.auth_token:
             payload["auth_token"] = self.auth_token
+
+        # Stable machine identity
+        payload["hardware_fingerprint"] = getattr(self, "hardware_fingerprint", self.get_hardware_fingerprint())
+        payload["device_uuid"] = getattr(self, "device_uuid", "")
+
         if pairing_code:
-            payload["pairing_code"] = pairing_code.strip()
-        hardware_fingerprint = os.getenv("EDGE_HARDWARE_FINGERPRINT") or ""
-        if hardware_fingerprint:
-            payload["hardware_fingerprint"] = hardware_fingerprint
+            code_clean = pairing_code.strip().upper()
+            payload["pairing_pin"] = code_clean
+            payload["pairing_code"] = code_clean
+
         api_url = os.getenv("EDGE_API_URL")
         if api_url:
             payload["api_url"] = api_url
@@ -148,6 +236,13 @@ class EdgeSyncManager:
         )
         status_value = str(response.get("status") or "approved").lower()
         request_id = str(response.get("request_id") or "")
+        assigned_id = str(response.get("kitchen_id") or "")
+
+        # Always capture and store the central-assigned device ID immediately
+        if assigned_id:
+            self.kitchen_id = assigned_id
+            self.db.set_setting("kitchen_id", self.kitchen_id)
+            self._save_persistent_identity()
 
         if status_value == "pending":
             self.central_url = central_url
@@ -157,7 +252,8 @@ class EdgeSyncManager:
             self.location = (location or "").strip()
             self.pending_request_id = request_id
             self.pending_pin = str(response.get("pin") or "")
-            self.kitchen_id = str(response.get("kitchen_id") or "")
+            if not self.kitchen_id:
+                self.kitchen_id = assigned_id
             self.auth_token = ""
             self.db.set_setting("central_url", self.central_url)
             self.db.set_setting("kitchen_id", self.kitchen_id)
@@ -169,6 +265,7 @@ class EdgeSyncManager:
             self.db.set_setting("edge_location", self.location)
             self.db.set_setting("pending_request_id", self.pending_request_id)
             self.db.set_setting("pending_pin", self.pending_pin)
+            self._save_persistent_identity()
             self._start_enrollment_poll(
                 central_url, request_id, hotel_name, kitchen_name, location, owner_id
             )
@@ -302,6 +399,9 @@ class EdgeSyncManager:
         if response.get("supabase_bucket"):
             self.db.set_setting("supabase_bucket", response.get("supabase_bucket"))
 
+        # Save identity & credentials to .edge_identity.json permanently
+        self._save_persistent_identity()
+
         with self._status_lock:
             self._last_error = ""
         was_running = self.running
@@ -336,6 +436,8 @@ class EdgeSyncManager:
             "connected": self._ws_connected,
             "central_url": self.central_url,
             "kitchen_id": self.kitchen_id,
+            "hardware_fingerprint": getattr(self, "hardware_fingerprint", ""),
+            "device_uuid": getattr(self, "device_uuid", ""),
             "owner_id": self.owner_id,
             "pending_request_id": self.pending_request_id,
             "pending_pin": self.pending_pin,

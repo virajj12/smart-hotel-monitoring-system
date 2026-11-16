@@ -11,6 +11,8 @@ hotel_monitoring.db*
 .env
 .env.*
 .env.local
+.edge_identity.json
+.edge_credentials.json
 .venv/
 node_modules/
 dist/
