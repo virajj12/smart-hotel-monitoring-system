@@ -20,6 +20,7 @@ export default defineConfig({
       '/export': 'http://127.0.0.1:8000',
       '/clear_logs': 'http://127.0.0.1:8000',
       '/violations': 'http://127.0.0.1:8000',
+      '/api/central': 'http://127.0.0.1:8000',
     }
   },
   build: {

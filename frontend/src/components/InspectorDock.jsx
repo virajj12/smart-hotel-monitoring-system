@@ -69,7 +69,7 @@ export default function InspectorDock({
 
   const renderAmfvRow = (item) => {
     const ratio = ratios[item.id] ?? 0;
-    const threshold = thresholds[item.id] ?? (item.id.includes('no_') ? 0.45 : 0.35);
+    const threshold = thresholds[item.id] ?? (item.id.includes('no_') ? 0.40 : 0.20);
     const isConfirmed = confirmedList.includes(item.id);
 
     const pct = Math.min(100, Math.round(ratio * 100));

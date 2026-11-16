@@ -4,3 +4,13 @@ runs/
 datasets/
 __pycache__/
 *.pt.backup*
+hotel_monitoring.db*
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+.env.local
+.venv/
+node_modules/
+dist/

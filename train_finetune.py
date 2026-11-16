@@ -7,6 +7,7 @@ Preserves existing model weights, provides class verification, and generates val
 import os
 import sys
 import shutil
+import subprocess
 import argparse
 from datetime import datetime
 from pathlib import Path
@@ -52,7 +53,7 @@ def download_from_roboflow(api_key: str, workspace: str, project_name: str, vers
         from roboflow import Roboflow
     except ImportError:
         print("❌ 'roboflow' package not installed. Installing now...")
-        os.system(f"{sys.executable} -m pip install roboflow")
+        subprocess.run([sys.executable, "-m", "pip", "install", "roboflow"], check=True)
         from roboflow import Roboflow
 
     print(f"\n📦 Fetching project '{workspace}/{project_name}' v{version} from Roboflow...")

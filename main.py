@@ -20,6 +20,12 @@ import threading
 import time
 import os
 import uuid
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 import csv
 import io
 import json
@@ -34,15 +40,25 @@ mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("image/svg+xml", ".svg")
 
-from database import Database
+from database import Database, mask_url_credentials, sanitize_camera_dict
 from camera_manager import CameraManager, VIOLATIONS, PESTS
+from utils.alert_dispatcher import NotificationHub
 
 app = FastAPI(title="Smart Hotel Monitoring System")
 
-# Enable CORS for local Vite dev server (e.g. port 3000 / 5173)
+# Safe CORS configuration (Explicit origins for local Vite frontend & electron/browser)
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000,http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,85 +91,31 @@ except Exception as e:
 # System tracking
 system_start_time = time.time()
 
-# Email configuration
-SENDER_EMAIL = "vinithmohan2006@gmail.com"
-APP_PASSWORD = "bxli unmn pwbv abol"
-RECEIVER_EMAIL = "vinithmohan2006@gmail.com"
+# SMTP & Notification configuration (Loaded securely from environment or settings)
+SENDER_EMAIL = os.getenv("SMTP_SENDER_EMAIL", "")
+APP_PASSWORD = os.getenv("SMTP_APP_PASSWORD", "")
+RECEIVER_EMAIL = os.getenv("SMTP_RECEIVER_EMAIL", "")
 
 
-def send_alert_email(label: str, timestamp: str, image_path: str, camera_name: str = "Kitchen"):
-    """Sends an email with violation details and snapshot attachment."""
-    receiver = db.get_setting("notification_email", RECEIVER_EMAIL)
-    sender = db.get_setting("sender_email", SENDER_EMAIL)
-    password = db.get_setting("app_password", APP_PASSWORD)
+def get_notification_hub() -> NotificationHub:
+    """Build a configured NotificationHub instance with current credentials."""
+    sender = db.get_setting("sender_email", SENDER_EMAIL) or SENDER_EMAIL
+    password = db.get_setting("app_password", APP_PASSWORD) or APP_PASSWORD
+    recipient = db.get_setting("notification_email", RECEIVER_EMAIL) or RECEIVER_EMAIL
+    webhook_url = db.get_setting("webhook_url", "") or ""
 
-    try:
-        msg = EmailMessage()
-        msg["Subject"] = f"⚠️ Hotel Violation Alert: {label.upper()} [{camera_name}]"
-        msg["From"] = sender
-        msg["To"] = receiver
-
-        msg.set_content(
-            f"A hygiene/pest violation was detected in the kitchen.\n\n"
-            f"Camera: {camera_name}\n"
-            f"Violation: {label}\n"
-            f"Time: {timestamp}\n\n"
-            f"Please review the attached snapshot for evidence."
-        )
-
-        with open(image_path, "rb") as f:
-            img_data = f.read()
-
-        safe_ts = timestamp.replace(":", "-").replace(" ", "_")
-        msg.add_attachment(
-            img_data,
-            maintype="image",
-            subtype="jpeg",
-            filename=f"{camera_name}_{label}_{safe_ts}.jpg",
-        )
-
-        try:
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as smtp:
-                smtp.login(sender, password)
-                smtp.send_message(msg)
-            print(f"[{timestamp}] ✅ Alert email sent for {label} on {camera_name} to {receiver}")
-        except Exception:
-            # Fallback to STARTTLS (port 587)
-            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as smtp:
-                smtp.starttls()
-                smtp.login(sender, password)
-                smtp.send_message(msg)
-            print(f"[{timestamp}] ✅ Alert email sent via STARTTLS for {label} on {camera_name} to {receiver}")
-    except Exception as e:
-        print(f"❌ Failed to send alert email: {e}")
-
-
-def send_webhook_alert(label: str, timestamp: str, camera_name: str, ratio: float, confidence: float, snapshot_path: str):
-    """Sends a webhook notification to an external HTTP URL if configured."""
-    webhook_url = db.get_setting("webhook_url", "")
-    if not webhook_url:
-        return
-    try:
-        payload = {
-            "event": "violation_detected",
-            "camera": camera_name,
-            "violation": label,
-            "category": "pest" if label in PESTS else "hygiene",
-            "timestamp": timestamp,
-            "amfv_ratio": ratio,
-            "confidence": confidence,
-            "snapshot_url": f"/snapshots/{os.path.basename(snapshot_path)}",
-        }
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            webhook_url,
-            data=data,
-            headers={"Content-Type": "application/json", "User-Agent": "SmartHotelMonitor/2.0"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            print(f"[{timestamp}] 🌐 Webhook delivered ({resp.status})")
-    except Exception as e:
-        print(f"❌ Webhook notification failed: {e}")
+    return NotificationHub(
+        smtp_config={
+            "host": os.getenv("SMTP_HOST", "smtp.gmail.com"),
+            "port": int(os.getenv("SMTP_PORT", "465")),
+            "use_ssl": True,
+            "sender": sender,
+            "sender_name": "Smart Hotel Monitoring AI",
+            "password": password,
+            "recipient": recipient,
+        },
+        webhook_url=webhook_url,
+    )
 
 
 def on_violation(
@@ -169,15 +131,35 @@ def on_violation(
     snapshot_filename = f"{camera_id}_{label}_{safe_ts}.jpg"
     snapshot_path = os.path.join("snapshots", snapshot_filename)
 
-    # Save snapshot image
+    # Save snapshot image (with forensic tamper-evident HUD watermark)
     try:
-        cv2.imwrite(snapshot_path, frame)
+        from utils.watermark import save_watermarked_snapshot
+        cam = camera_manager.get_camera(camera_id)
+        cam_name = cam.name if cam else camera_id
+        save_watermarked_snapshot(
+            frame=frame,
+            output_path=snapshot_path,
+            metadata={
+                "hotel_name": db.get_setting("hotel_name", "Grand Hotel & Suites"),
+                "location": db.get_setting("edge_location", "Main Prep Kitchen"),
+                "camera_name": cam_name,
+                "label": label,
+                "category": "pest" if label in ("cockroach", "lizard", "rat") else "hygiene",
+                "confidence": confidence,
+                "amfv_ratio": ratio,
+                "timestamp": timestamp,
+            },
+        )
     except Exception as e:
-        print(f"❌ Failed to save snapshot: {e}")
+        try:
+            cv2.imwrite(snapshot_path, frame)
+        except Exception as write_err:
+            print(f"❌ Failed to save snapshot: {write_err}")
 
     # Persist in DB
+    violation_id = None
     try:
-        db.add_violation(
+        violation_id = db.add_violation(
             camera_id=camera_id,
             label=label,
             timestamp=timestamp,
@@ -198,34 +180,50 @@ def on_violation(
         f"(ratio={ratio:.2f}, conf={confidence:.2f})"
     )
 
-    # Dispatch alerts in background threads
-    threading.Thread(
-        target=send_alert_email,
-        args=(label, timestamp, snapshot_path, camera_name),
-        daemon=True,
-    ).start()
+    # Dispatch alerts via enterprise NotificationHub with anti-spam cooldown filter
+    email_enabled = db.get_setting("email_alerts_enabled", "1") == "1"
+    webhook_url = db.get_setting("webhook_url", "")
 
-    threading.Thread(
-        target=send_webhook_alert,
-        args=(label, timestamp, camera_name, ratio, confidence, snapshot_path),
-        daemon=True,
-    ).start()
+    channels = []
+    if email_enabled:
+        channels.append("email")
+    if webhook_url:
+        channels.append("webhook")
 
-    # Forward violation & snapshot to Central Fleet Server
-    if edge_sync:
-        threading.Thread(
-            target=edge_sync.forward_incident,
-            args=(camera_id, camera_name, label, timestamp, confidence, ratio, snapshot_path),
-            daemon=True,
-        ).start()
+    if channels:
+        try:
+            hub = get_notification_hub()
+            event_data = {
+                "hotel_name": db.get_setting("hotel_name", "Grand Hotel & Suites"),
+                "location": db.get_setting("edge_location", "Main Prep Kitchen"),
+                "camera_id": camera_id,
+                "camera_name": camera_name,
+                "label": label,
+                "category": "pest" if label in PESTS else "hygiene",
+                "confidence": round(confidence, 3),
+                "amfv_ratio": round(ratio, 3),
+                "timestamp": timestamp,
+                "incident_id": violation_id,
+            }
+            hub.dispatch_violation_alert(
+                event_data=event_data,
+                snapshot_path=snapshot_path,
+                channels=channels,
+            )
+        except Exception as e:
+            print(f"❌ Alert dispatch error: {e}")
+
+    # Violations are queued in the local sync ledger and uploaded to the
+    # central server on the next hourly / on-demand batch sync.
+
 
 
 # Initialize CameraManager with YOLO model and callback
 camera_manager = CameraManager(model=model, on_violation=on_violation)
 
-# Edge-to-Central Fleet Synchronization Client
-from edge_sync import EdgeSyncClient
-edge_sync = EdgeSyncClient(db=db, camera_manager=camera_manager)
+# Edge-to-Central duplex synchronization manager
+from edge_sync import EdgeSyncManager
+edge_sync = EdgeSyncManager(db=db, camera_manager=camera_manager)
 
 
 @app.on_event("startup")
@@ -270,11 +268,32 @@ def startup_event():
             except Exception as e:
                 print(f"❌ Error starting camera {cam['id']}: {e}")
 
+    # Load and apply calibration & AMFV settings from database
+    try:
+        saved_settings = db.get_all_settings()
+        camera_manager.update_all_configs(
+            window_size=int(saved_settings.get("amfv_window", 10)),
+            threshold_pest=float(saved_settings.get("amfv_threshold_pest", 0.2)),
+            threshold_hygiene=float(saved_settings.get("amfv_threshold_hygiene", 0.4)),
+            cooldown=int(saved_settings.get("cooldown_seconds", 30)),
+            conf_threshold=float(saved_settings.get("conf_threshold", 0.45)),
+            geometric_filter=saved_settings.get("geometric_filter", "1") == "1",
+            imgsz=int(saved_settings.get("imgsz", 640)),
+            iou_threshold=float(saved_settings.get("iou_threshold", 0.45)),
+            enable_tta=saved_settings.get("enable_tta", "0") == "1",
+        )
+    except Exception as e:
+        print(f"⚠️ [Startup] Calibration apply warning: {e}")
+
 
 @app.on_event("shutdown")
 def shutdown_event():
-    """Stop all camera streams gracefully on shutdown."""
+    """Stop all camera streams and the duplex sync channel on shutdown."""
     camera_manager.stop_all()
+    try:
+        edge_sync.stop()
+    except Exception as e:
+        print(f"[Edge Sync] Shutdown warning: {e}")
 
 
 # ── Frontend Web Dashboard ──────────────────────────────────────────
@@ -328,7 +347,7 @@ def get_cameras():
         result.append({
             "id": cam_id,
             "name": c["name"],
-            "source": c["source"],
+            "source": mask_url_credentials(c["source"]),
             "location": c.get("location", ""),
             "source_type": c.get("source_type", "rtsp"),
             "enabled": bool(c.get("enabled", 1)),
@@ -400,7 +419,7 @@ async def add_camera(payload: Dict[str, Any] = Body(...)):
     return JSONResponse(content={
         "id": cam_id,
         "name": name,
-        "source": source,
+        "source": mask_url_credentials(source),
         "location": location,
         "source_type": source_type,
         "enabled": True,
@@ -427,7 +446,7 @@ def get_camera(camera_id: str):
     return JSONResponse(content={
         "id": c["id"],
         "name": c["name"],
-        "source": c["source"],
+        "source": mask_url_credentials(c["source"]),
         "location": c.get("location", ""),
         "source_type": c.get("source_type", "rtsp"),
         "enabled": bool(c.get("enabled", 1)),
@@ -465,7 +484,7 @@ async def update_camera(camera_id: str, payload: Dict[str, Any] = Body(...)):
                 camera_id=camera_id,
             )
 
-    return JSONResponse(content={"status": "updated", "camera": updated})
+    return JSONResponse(content={"status": "updated", "camera": sanitize_camera_dict(updated)})
 
 
 @app.delete("/cameras/{camera_id}")
@@ -701,7 +720,7 @@ def get_amfv_status(camera_id: Optional[str] = None):
     response_data["ratios"] = ratios
     response_data["confirmed"] = list(confirmed_set)
     response_data["thresholds"] = thresholds
-    response_data["window_size"] = 2
+    response_data["window_size"] = int(db.get_setting("amfv_window", 10))
 
     return JSONResponse(content=response_data)
 
@@ -802,7 +821,7 @@ def get_snapshots_list(camera_id: Optional[str] = None, label: Optional[str] = N
                 "filename": filename,
                 "url": f"/snapshots/{filename}",
                 "snapshot": f"/snapshots/{filename}",
-                "snapshot_path": resolved_path.replace("\\", "/"),
+                "snapshot_path": f"/snapshots/{filename}",
                 "label": v["label"],
                 "category": "pest" if v["label"] in PESTS else "hygiene",
                 "camera_name": cam_map.get(c_id, c_id),
@@ -813,6 +832,39 @@ def get_snapshots_list(camera_id: Optional[str] = None, label: Optional[str] = N
     return JSONResponse(content=items)
 
 
+# ── Central Fleet Connection API ─────────────────────────────────────
+
+@app.post("/api/central/connect")
+def connect_central(payload: Dict[str, Any] = Body(...)):
+    """Register this edge with the central server and open the duplex channel."""
+    try:
+        result = edge_sync.connect_to_central(
+            central_url=str(payload.get("central_url", "")),
+            hotel_name=str(payload.get("hotel_name", "")),
+            kitchen_name=str(payload.get("kitchen_name", "")),
+            location=str(payload.get("location", "")),
+            owner_id=str(payload.get("owner_id") or ""),
+            pairing_code=str(payload.get("pairing_code") or ""),
+        )
+        return JSONResponse(content=result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/api/central/status")
+def central_status():
+    """Return duplex connection state and local sync-ledger counters."""
+    return JSONResponse(content=edge_sync.get_status())
+
+
+@app.post("/api/central/sync_now")
+def central_sync_now():
+    """Run one immediate batch sync to the central server."""
+    return JSONResponse(content=edge_sync.sync_now())
+
+
 # ── Dynamic System Settings API ──────────────────────────────────────
 
 @app.get("/settings")
@@ -820,7 +872,12 @@ def get_settings():
     """Retrieve current system configuration."""
     saved = db.get_all_settings()
     return JSONResponse(content={
-        "amfv_window": int(saved.get("amfv_window", 2)),
+        "conf_threshold": float(saved.get("conf_threshold", 0.45)),
+        "imgsz": int(saved.get("imgsz", 640)),
+        "geometric_filter": saved.get("geometric_filter", "1") == "1",
+        "enable_tta": saved.get("enable_tta", "0") == "1",
+        "iou_threshold": float(saved.get("iou_threshold", 0.45)),
+        "amfv_window": int(saved.get("amfv_window", 10)),
         "amfv_threshold_pest": float(saved.get("amfv_threshold_pest", 0.2)),
         "amfv_threshold_hygiene": float(saved.get("amfv_threshold_hygiene", 0.4)),
         "cooldown_seconds": int(saved.get("cooldown_seconds", 30)),
@@ -833,27 +890,95 @@ def get_settings():
 @app.post("/settings")
 async def update_settings(payload: Dict[str, Any] = Body(...)):
     """Update system settings and propagate to active streams."""
-    if "amfv_window" in payload:
-        db.set_setting("amfv_window", str(payload["amfv_window"]))
-    if "amfv_threshold_pest" in payload:
-        db.set_setting("amfv_threshold_pest", str(payload["amfv_threshold_pest"]))
-    if "amfv_threshold_hygiene" in payload:
-        db.set_setting("amfv_threshold_hygiene", str(payload["amfv_threshold_hygiene"]))
-    if "cooldown_seconds" in payload:
-        db.set_setting("cooldown_seconds", str(payload["cooldown_seconds"]))
-    if "notification_email" in payload:
+    conf_val = None
+    if "conf_threshold" in payload and payload["conf_threshold"] is not None:
+        try:
+            conf_val = float(payload["conf_threshold"])
+            db.set_setting("conf_threshold", str(conf_val))
+        except (ValueError, TypeError):
+            pass
+
+    imgsz_val = None
+    if "imgsz" in payload and payload["imgsz"] is not None:
+        try:
+            imgsz_val = int(payload["imgsz"])
+            db.set_setting("imgsz", str(imgsz_val))
+        except (ValueError, TypeError):
+            pass
+
+    geom_val = None
+    if "geometric_filter" in payload:
+        geom_val = bool(payload["geometric_filter"])
+        db.set_setting("geometric_filter", "1" if geom_val else "0")
+
+    tta_val = None
+    if "enable_tta" in payload:
+        tta_val = bool(payload["enable_tta"])
+        db.set_setting("enable_tta", "1" if tta_val else "0")
+
+    iou_val = None
+    if "iou_threshold" in payload and payload["iou_threshold"] is not None:
+        try:
+            iou_val = float(payload["iou_threshold"])
+            db.set_setting("iou_threshold", str(iou_val))
+        except (ValueError, TypeError):
+            pass
+
+    window_val = None
+    if "amfv_window" in payload and payload["amfv_window"] is not None:
+        try:
+            window_val = int(payload["amfv_window"])
+            db.set_setting("amfv_window", str(window_val))
+        except (ValueError, TypeError):
+            pass
+
+    pest_thresh_val = None
+    if "amfv_threshold_pest" in payload and payload["amfv_threshold_pest"] is not None:
+        try:
+            pest_thresh_val = float(payload["amfv_threshold_pest"])
+            db.set_setting("amfv_threshold_pest", str(pest_thresh_val))
+        except (ValueError, TypeError):
+            pass
+
+    hygiene_thresh_val = None
+    if "amfv_threshold_hygiene" in payload and payload["amfv_threshold_hygiene"] is not None:
+        try:
+            hygiene_thresh_val = float(payload["amfv_threshold_hygiene"])
+            db.set_setting("amfv_threshold_hygiene", str(hygiene_thresh_val))
+        except (ValueError, TypeError):
+            pass
+
+    cooldown_val = None
+    if "cooldown_seconds" in payload and payload["cooldown_seconds"] is not None:
+        try:
+            cooldown_val = int(payload["cooldown_seconds"])
+            db.set_setting("cooldown_seconds", str(cooldown_val))
+        except (ValueError, TypeError):
+            pass
+
+    if "notification_email" in payload and payload["notification_email"] is not None:
         db.set_setting("notification_email", str(payload["notification_email"]).strip())
-    if "webhook_url" in payload:
-        db.set_setting("webhook_url", str(payload["webhook_url"]).strip())
+
+    if "webhook_url" in payload and payload["webhook_url"] is not None:
+        raw_url = str(payload["webhook_url"]).strip()
+        if raw_url and not raw_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Webhook URL must use http or https")
+        db.set_setting("webhook_url", raw_url)
+
     if "email_alerts_enabled" in payload:
         db.set_setting("email_alerts_enabled", "1" if payload["email_alerts_enabled"] else "0")
 
     # Propagate to running camera streams
     camera_manager.update_all_configs(
-        window_size=int(payload.get("amfv_window")) if "amfv_window" in payload and payload.get("amfv_window") else None,
-        threshold_pest=float(payload.get("amfv_threshold_pest")) if "amfv_threshold_pest" in payload and payload.get("amfv_threshold_pest") else None,
-        threshold_hygiene=float(payload.get("amfv_threshold_hygiene")) if "amfv_threshold_hygiene" in payload and payload.get("amfv_threshold_hygiene") else None,
-        cooldown=int(payload.get("cooldown_seconds")) if "cooldown_seconds" in payload and payload.get("cooldown_seconds") else None,
+        window_size=window_val,
+        threshold_pest=pest_thresh_val,
+        threshold_hygiene=hygiene_thresh_val,
+        cooldown=cooldown_val,
+        conf_threshold=conf_val,
+        geometric_filter=geom_val,
+        imgsz=imgsz_val,
+        iou_threshold=iou_val,
+        enable_tta=tta_val,
     )
 
     return JSONResponse(content={"status": "saved", "message": "Settings updated successfully."})

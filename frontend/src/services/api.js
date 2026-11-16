@@ -61,6 +61,15 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  // Central fleet connection
+  getCentralStatus: () => fetchJson('/api/central/status'),
+  connectCentral: (data) =>
+    fetchJson('/api/central/connect', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  syncCentralNow: () => fetchJson('/api/central/sync_now', { method: 'POST' }),
+
   // Export URL helper
   getCsvExportUrl: (cameraId) => `/export/csv${cameraId ? `?camera_id=${cameraId}` : ''}`,
 };

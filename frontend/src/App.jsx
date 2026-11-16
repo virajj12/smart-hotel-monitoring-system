@@ -8,6 +8,7 @@ import AddCameraModal from './components/AddCameraModal';
 import AnalyticsModal from './components/AnalyticsModal';
 import SnapshotGalleryModal from './components/SnapshotGalleryModal';
 import SettingsModal from './components/SettingsModal';
+import CentralConnectModal from './components/CentralConnectModal';
 
 import { api } from './services/api';
 import { Badge } from './components/ui/badge';
@@ -31,6 +32,8 @@ export default function App() {
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isCentralOpen, setIsCentralOpen] = useState(false);
+  const [centralStatus, setCentralStatus] = useState(null);
   const [zoomedImageUrl, setZoomedImageUrl] = useState(null);
 
   // Fetch cameras
@@ -62,19 +65,31 @@ export default function App() {
     }
   }, [selectedCameraId]);
 
+  const fetchCentralStatus = useCallback(async () => {
+    try {
+      const data = await api.getCentralStatus();
+      setCentralStatus(data || null);
+    } catch (err) {
+      console.error('Failed to load central connection status', err);
+    }
+  }, []);
+
   // Initial load & Polling
   useEffect(() => {
     fetchCameras();
     fetchTelemetry();
+    fetchCentralStatus();
 
     const telemetryInterval = setInterval(fetchTelemetry, 2200);
     const cameraInterval = setInterval(fetchCameras, 6000);
+    const centralInterval = setInterval(fetchCentralStatus, 5000);
 
     return () => {
       clearInterval(telemetryInterval);
       clearInterval(cameraInterval);
+      clearInterval(centralInterval);
     };
-  }, [fetchCameras, fetchTelemetry]);
+  }, [fetchCameras, fetchTelemetry, fetchCentralStatus]);
 
   // Actions
   const handleAddDemoCamera = async () => {
@@ -124,6 +139,8 @@ export default function App() {
       {/* Top Navigation Bar */}
       <Navbar
         systemInfo={systemInfo}
+        centralStatus={centralStatus}
+        onOpenCentral={() => setIsCentralOpen(true)}
         onOpenAddCamera={() => setIsAddCameraOpen(true)}
         onOpenAnalytics={() => setIsAnalyticsOpen(true)}
         onOpenGallery={() => setIsGalleryOpen(true)}
@@ -222,6 +239,12 @@ export default function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+      />
+
+      <CentralConnectModal
+        isOpen={isCentralOpen}
+        onClose={() => setIsCentralOpen(false)}
+        onStatusChange={setCentralStatus}
       />
 
       {/* High-Resolution Evidence Zoom Dialog */}

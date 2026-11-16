@@ -3,9 +3,29 @@ SQLite persistence layer for cameras and violations.
 Thread-safe via threading.local() connections.
 """
 
+import re
 import sqlite3
 import threading
 from datetime import datetime
+
+
+def mask_url_credentials(url: str) -> str:
+    """Mask embedded passwords in RTSP/HTTP URLs for safe API transmission."""
+    if not url or not isinstance(url, str):
+        return ""
+    # Matches ://user:pass@host -> ://user:***@host
+    return re.sub(r"://([^:@\s]+):([^@\s]+)@", r"://\1:***@", url)
+
+
+def sanitize_camera_dict(camera: dict | None) -> dict | None:
+    """Return a sanitized camera dictionary safe for client API responses."""
+    if not camera:
+        return None
+    safe = dict(camera)
+    safe.pop("password", None)
+    if "source" in safe and safe["source"]:
+        safe["source"] = mask_url_credentials(safe["source"])
+    return safe
 
 
 class Database:
@@ -50,6 +70,8 @@ class Database:
                 snapshot_path TEXT DEFAULT '',
                 confidence REAL DEFAULT 0.0,
                 acknowledged INTEGER DEFAULT 0,
+                synced_to_central INTEGER DEFAULT 0,
+                synced_at TIMESTAMP,
                 FOREIGN KEY (camera_id) REFERENCES cameras(id) ON DELETE SET NULL
             );
 
@@ -58,7 +80,17 @@ class Database:
                 value TEXT NOT NULL
             );
         """)
+        # Migration for existing databases created before the central sync ledger.
+        self._ensure_column(conn, "violations", "synced_to_central", "INTEGER DEFAULT 0")
+        self._ensure_column(conn, "violations", "synced_at", "TIMESTAMP")
         conn.commit()
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+        """Add a column to an existing table when it is missing (simple migration)."""
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
     # ── Camera CRUD ──────────────────────────────────────────────────────
 
@@ -227,6 +259,52 @@ class Database:
         conn.commit()
         return cursor.rowcount > 0
 
+    # ── Central sync ledger ──────────────────────────────────────────────
+
+    def get_unsynced_violations(self, limit: int = 200) -> list[dict]:
+        """Return violations that have not been accepted by the central server yet."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT * FROM violations
+               WHERE COALESCE(synced_to_central, 0) = 0
+               ORDER BY id ASC LIMIT ?""",
+            (max(1, int(limit)),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_violations_synced(self, violation_ids: list[int]) -> int:
+        """Mark ledger rows as synced after the central server acknowledges them."""
+        ids = [int(v) for v in violation_ids]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        conn = self._get_conn()
+        cursor = conn.execute(
+            f"""UPDATE violations
+                SET synced_to_central = 1, synced_at = CURRENT_TIMESTAMP
+                WHERE id IN ({placeholders})""",
+            ids,
+        )
+        conn.commit()
+        return cursor.rowcount
+
+    def get_sync_status(self) -> dict:
+        """Return local sync ledger counts and the last acknowledged sync time."""
+        conn = self._get_conn()
+        total = conn.execute("SELECT COUNT(*) AS cnt FROM violations").fetchone()["cnt"]
+        unsynced = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM violations WHERE COALESCE(synced_to_central, 0) = 0"
+        ).fetchone()["cnt"]
+        last_synced_at = conn.execute(
+            "SELECT MAX(synced_at) AS ts FROM violations WHERE synced_at IS NOT NULL"
+        ).fetchone()["ts"]
+        return {
+            "total_count": total,
+            "synced_count": total - unsynced,
+            "unsynced_count": unsynced,
+            "last_synced_at": last_synced_at,
+        }
+
     # ── Settings CRUD ────────────────────────────────────────────────────
 
     def get_setting(self, key: str, default: str | None = None) -> str | None:
@@ -289,12 +367,19 @@ class Database:
                 hourly[h_key] = r["cnt"]
 
         # Per camera distribution
-        cam_rows = conn.execute(
-            """SELECT v.camera_id, COALESCE(c.name, v.camera_id) as cam_name, COUNT(*) as cnt
-               FROM violations v
-               LEFT JOIN cameras c ON v.camera_id = c.id
-               GROUP BY v.camera_id ORDER BY cnt DESC"""
-        ).fetchall()
+        cam_query = """SELECT v.camera_id, COALESCE(c.name, v.camera_id) as cam_name, COUNT(*) as cnt
+                       FROM violations v
+                       LEFT JOIN cameras c ON v.camera_id = c.id"""
+        if camera_id is not None:
+            cam_query += f" {base_where}"
+            cam_rows = conn.execute(
+                f"{cam_query} GROUP BY v.camera_id ORDER BY cnt DESC",
+                params,
+            ).fetchall()
+        else:
+            cam_rows = conn.execute(
+                f"{cam_query} GROUP BY v.camera_id ORDER BY cnt DESC"
+            ).fetchall()
         by_camera = {r["cam_name"] or "Unknown": r["cnt"] for r in cam_rows}
 
         # Acknowledged vs unacknowledged

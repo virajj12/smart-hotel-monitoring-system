@@ -108,6 +108,8 @@ async def camera_page(request: Request):
     return templates.TemplateResponse(request=request, name="camera.html")
 
 
+MAX_FRAME_SIZE = 5 * 1024 * 1024  # 5 MB max frame size to prevent OOM / DoS
+
 # ── WebSocket Frame Receiver ──────────────────────────────────────────
 
 @app.websocket("/ws/stream")
@@ -122,7 +124,7 @@ async def websocket_stream(websocket: WebSocket):
         while True:
             # Receive binary JPEG data from phone
             data = await websocket.receive_bytes()
-            if data and len(data) > 100:
+            if data and 100 < len(data) <= MAX_FRAME_SIZE:
                 with frame_lock:
                     latest_frame_bytes = data
                     last_frame_received_time = time.time()

@@ -6,13 +6,16 @@ import {
   Settings, 
   Download, 
   Plus, 
-  Clock 
+  Clock,
+  Cloud,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 
 export default function Navbar({
   systemInfo,
+  centralStatus,
+  onOpenCentral,
   onOpenAddCamera,
   onOpenAnalytics,
   onOpenGallery,
@@ -97,6 +100,40 @@ export default function Navbar({
           <Button variant="outline" size="sm" onClick={onExportCsv} className="gap-1.5 text-zinc-300 hover:text-white border-zinc-800 hover:bg-zinc-800/60">
             <Download className="h-3.5 w-3.5 text-zinc-400" />
             <span>CSV Audit</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpenCentral}
+            title={
+              centralStatus?.connected
+                ? 'Central fleet: connected'
+                : centralStatus?.configured
+                  ? 'Central fleet: offline'
+                  : 'Connect to central fleet'
+            }
+            className="gap-1.5 text-zinc-300 hover:text-white border-zinc-800 hover:bg-zinc-800/60"
+          >
+            <Cloud className="h-3.5 w-3.5 text-zinc-400" />
+            <span className="hidden lg:inline">Central</span>
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                centralStatus?.connected
+                  ? 'bg-emerald-400 shadow-[0_0_5px_rgba(52,211,153,0.8)]'
+                  : centralStatus?.configured
+                    ? 'bg-amber-400'
+                    : 'bg-zinc-600'
+              }`}
+            />
+            {centralStatus?.unsynced_count > 0 && (
+              <Badge
+                variant="outline"
+                className="h-4 border-amber-700/60 px-1 text-[9px] font-mono text-amber-300"
+              >
+                {centralStatus.unsynced_count}
+              </Badge>
+            )}
           </Button>
 
           <Button variant="ghost" size="icon" onClick={onOpenSettings} title="Surveillance Settings" className="text-zinc-400 hover:text-white hover:bg-zinc-800/60">

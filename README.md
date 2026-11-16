@@ -51,15 +51,26 @@ The interface is built with **React 19**, **Tailwind CSS**, and **shadcn UI**, d
 
 ```
 Smart-hotel-monitoring-system/
-├── camera_manager.py           # Multi-threaded RTSP capture, AMFV engine, geometric filter
-├── database.py                 # SQLite WAL persistence layer for cameras, logs, & settings
+├── camera_manager.py           # Multi-threaded RTSP capture, AMFV engine, 2-tier geometric filter
+├── database.py                 # SQLite WAL persistence layer with credential masking
+├── edge_sync.py                # 3s HTTP Polling edge sync, ephemeral live snapshot, Supabase direct upload
 ├── main.py                     # FastAPI application, streaming endpoints, static mounts
-├── train_finetune.py           # YOLOv8 fine-tuning script for hotel PPE datasets
+├── train_finetune.py           # YOLOv8 fine-tuning script for hotel PPE datasets (subprocess secured)
 ├── best.pt                     # YOLOv8 PyTorch model weights (Pests + PPE classes)
 ├── best.onnx                   # ONNX optimized model export
 ├── demo1.mp4                   # Active CCTV surveillance test video
-├── hotel_monitoring.db         # Persistent SQLite database
-├── snapshots/                  # Auto-captured violation evidence images
+├── hotel_monitoring.db         # Persistent SQLite database (git-ignored)
+├── requirements.txt            # Python dependencies (fastapi, uvicorn, ultralytics, etc.)
+├── .env.example                # Environment variable template
+├── snapshots/                  # Auto-captured violation evidence images (git-ignored)
+├── docs/                       # Project specifications, architecture memory, and task guides
+│   ├── opencode.md             # Canonical end-to-end architecture & reference guide
+│   ├── AGENT_FEEDBACK.md       # Audit review notes
+│   ├── imple.md                # Implementation notes
+│   └── *.md                    # Development task specifications
+├── utils/
+│   ├── alert_dispatcher.py     # NotificationHub, AlertRateLimiter, branded HTML email, webhooks
+│   └── watermark.py            # Tamper-evident forensic HUD banner & SHA-256 watermarking
 ├── templates/
 │   └── index.html              # Synchronized React application entry point
 └── frontend/
@@ -67,8 +78,6 @@ Smart-hotel-monitoring-system/
     ├── tailwind.config.js      # Tailwind CSS configuration with shadcn HSL variables
     ├── vite.config.js          # Vite build & proxy configuration
     ├── dist/                   # Production React build served directly by FastAPI
-    │   ├── index.html
-    │   └── assets/             # Bundled JS and CSS assets
     └── src/
         ├── App.jsx             # Top-level state orchestration & layout
         ├── index.css           # Ash grey & white design tokens
@@ -81,18 +90,49 @@ Smart-hotel-monitoring-system/
         │   ├── AnalyticsModal.jsx      # Time-series charts & hourly peak distribution
         │   ├── SettingsModal.jsx       # Real-time AMFV & alert sensitivity controls
         │   ├── SnapshotGalleryModal.jsx # Evidence snapshot gallery with zoom
+        │   ├── CentralConnectModal.jsx # Cloud fleet enrollment & pairing modal
         │   └── ui/                     # Modular shadcn UI primitives
         └── services/
             └── api.js                  # Centralized REST API client
 ```
 
+> 📚 **Complete Architecture Documentation**: See [docs/opencode.md](docs/opencode.md) for full protocol definitions, calibration algorithms, and cloud integration details.
+
 ---
 
-## ⚙️ Quick Start Guide
+## ⚡ 1-Command Instant Launch (Recommended)
+
+Run the entire Edge Node — backend vision engine, AMFV consensus pipeline, SQLite database, and pre-built React 19 UI — in a single command. The runner automatically detects your Python environment, sets up dependencies, validates configuration, and opens your browser.
+
+```powershell
+# Windows Command Prompt or double-click in Explorer:
+run.bat
+
+# Windows PowerShell:
+.\run.ps1
+
+# Cross-platform / direct Python:
+python run.py
+
+# Using npm (if Node.js is installed):
+npm start
+```
+
+### CLI Parameters & Customization
+| Flag | Description | Example |
+| :--- | :--- | :--- |
+| `--port <num>` / `-Port <num>` | Specify HTTP port (default: `8000`) | `run.bat --port 8080` or `.\run.ps1 -Port 8080` |
+| `--host <ip>` / `-HostAddress <ip>` | Bind IP address (default: `0.0.0.0`) | `run.bat --host 127.0.0.1` |
+| `--no-browser` / `-NoBrowser` | Suppress auto-opening default browser | `.\run.ps1 -NoBrowser` |
+| `--reload` / `-Reload` | Enable Uvicorn live hot-reloading | `python run.py --reload` |
+
+---
+
+## ⚙️ Manual Setup & Alternative Modes
 
 ### Prerequisites
 * **Python**: 3.10 or higher
-* **Node.js**: 18.x or higher (with `npm`)
+* **Node.js**: 18.x or higher (optional, only needed when recompiling frontend UI)
 
 ---
 
@@ -102,7 +142,7 @@ FastAPI serves the pre-compiled, high-performance React bundle directly from `fr
 
 #### 1. Install Backend Dependencies
 ```bash
-pip install fastapi ultralytics opencv-python uvicorn jinja2
+pip install -r requirements.txt
 ```
 
 #### 2. Install Frontend Dependencies & Build Bundle

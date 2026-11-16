@@ -1,0 +1,19 @@
+{
+  "name": "shms-edge-server",
+  "version": "2.0.0",
+  "description": "Smart Hotel Monitoring System - Edge Vision Server",
+  "scripts": {
+    "start": "run.bat",
+    "start:ps": "powershell -ExecutionPolicy Bypass -File .\\run.ps1",
+    "start:py": "python run.py",
+    "build:ui": "npm run build --prefix frontend"
+  },
+  "keywords": [
+    "shms",
+    "edge-server",
+    "computer-vision",
+    "hotel-monitoring"
+  ],
+  "author": "",
+  "license": "ISC"
+}
