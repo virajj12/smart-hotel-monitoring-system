@@ -6,6 +6,8 @@ import {
   Link2,
   Loader2,
   RefreshCw,
+  Copy,
+  Check,
 } from 'lucide-react';
 import {
   Dialog,
@@ -37,6 +39,8 @@ export default function CentralConnectModal({ isOpen, onClose, onStatusChange })
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [copiedSessionId, setCopiedSessionId] = useState(false);
+  const [copiedPin, setCopiedPin] = useState(false);
 
   const applyStatus = useCallback(
     (nextStatus) => {
@@ -185,9 +189,23 @@ export default function CentralConnectModal({ isOpen, onClose, onStatusChange })
           </div>
 
           {configured && (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-zinc-400">
-              <span>Kitchen ID</span>
-              <span className="font-mono text-zinc-200 truncate">{status.kitchen_id}</span>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] text-zinc-400">
+              <span>Kitchen Session ID</span>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-zinc-200 font-semibold truncate">{status.kitchen_id}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(status.kitchen_id);
+                    setCopiedSessionId(true);
+                    setTimeout(() => setCopiedSessionId(false), 2000);
+                  }}
+                  className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                  title="Copy Kitchen Session ID"
+                >
+                  {copiedSessionId ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                </button>
+              </div>
               <span>Unsynced incidents</span>
               <span className="font-mono text-zinc-200">
                 {status.unsynced_count ?? 0}
@@ -223,8 +241,25 @@ export default function CentralConnectModal({ isOpen, onClose, onStatusChange })
             </p>
             <div className="flex items-center gap-3">
               <div className="text-[10px] uppercase tracking-wider text-amber-200/70">Verification PIN</div>
-              <div className="px-3 py-1 rounded-md bg-zinc-950/60 border border-amber-700/40 font-mono text-lg font-bold tracking-[0.2em] text-amber-200">
-                {status.pending_pin || status.pin || '------'}
+              <div className="flex items-center gap-2">
+                <div className="px-3 py-1 rounded-md bg-zinc-950/60 border border-amber-700/40 font-mono text-lg font-bold tracking-[0.2em] text-amber-200">
+                  {status.pending_pin || status.pin || '------'}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const pin = status.pending_pin || status.pin;
+                    if (pin) {
+                      navigator.clipboard.writeText(pin);
+                      setCopiedPin(true);
+                      setTimeout(() => setCopiedPin(false), 2000);
+                    }
+                  }}
+                  className="p-1.5 rounded-lg bg-zinc-900 border border-amber-700/40 text-amber-300 hover:text-white transition-colors"
+                  title="Copy PIN to share with admin"
+                >
+                  {copiedPin ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                </button>
               </div>
             </div>
             <div className="text-[10px] font-mono text-amber-200/60 truncate">
