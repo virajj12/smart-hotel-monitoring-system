@@ -35,6 +35,7 @@ class EdgeSyncManager:
     MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024
     MAX_BATCH_SNAPSHOT_BYTES = 2 * 1024 * 1024
     DEFAULT_OWNER_ID = "OWN-DEFAULT-SYSTEM"
+    AUTO_SYNC_THRESHOLD = 5
 
     def __init__(self, db, camera_manager):
         self.db = db
@@ -52,6 +53,10 @@ class EdgeSyncManager:
         ) or ""
         self.location = self.db.get_setting("edge_location", "Main Prep Kitchen") or ""
         self.sync_interval_minutes = self._read_interval()
+        try:
+            self.auto_sync_threshold = int(self.db.get_setting("auto_sync_threshold", str(self.AUTO_SYNC_THRESHOLD)) or self.AUTO_SYNC_THRESHOLD)
+        except Exception:
+            self.auto_sync_threshold = self.AUTO_SYNC_THRESHOLD
         self.pending_request_id = self.db.get_setting("pending_request_id", "") or ""
         self.pending_pin = self.db.get_setting("pending_pin", "") or ""
 
@@ -350,17 +355,30 @@ class EdgeSyncManager:
         """Run one batch sync synchronously and return its result."""
         return self._run_batch_sync(reason="manual")
 
-    def trigger_sync(self) -> dict:
-        """Schedule one batch sync in the background (used by the WS command)."""
+    def trigger_sync(self, reason: str = "remote") -> dict:
+        """Schedule one batch sync in the background (used by the WS command or internal trigger)."""
         if not self._has_credentials():
             return {"success": False, "error": "Central connection is not configured"}
         threading.Thread(
             target=self._run_batch_sync,
-            kwargs={"reason": "remote"},
-            name="edge-sync-remote",
+            kwargs={"reason": reason},
+            name=f"edge-sync-{reason}",
             daemon=True,
         ).start()
         return {"success": True, "message": "Sync scheduled"}
+
+    def notify_new_violation(self):
+        """Immediately checks if unsynced violations/snapshots exceed threshold (>= 5) and triggers sync."""
+        if not self._has_credentials():
+            return
+        try:
+            status = self.db.get_sync_status()
+            unsynced = status.get("unsynced_count", 0)
+            if unsynced >= self.auto_sync_threshold:
+                print(f"[Edge Sync] Auto-sync triggered: {unsynced} unsynced snapshots (threshold >= {self.auto_sync_threshold})")
+                self.trigger_sync(reason="threshold_exceeded")
+        except Exception as exc:
+            pass
 
     # ── Supervisor loop ─────────────────────────────────────────────────
 
@@ -409,12 +427,15 @@ class EdgeSyncManager:
                     for cmd in commands:
                         self._handle_command(cmd)
 
-                    # Trigger periodic sync if due
+                    # Trigger auto-sync if unsynced snapshots reach threshold (>= 5), or periodic sync
                     now = time.monotonic()
-                    if now >= self._next_sync_at:
+                    unsynced = ledger.get("unsynced_count", 0)
+                    if unsynced >= self.auto_sync_threshold:
+                        self._schedule_background_sync("threshold_exceeded")
+                    elif now >= self._next_sync_at:
                         self._next_sync_at = now + self.sync_interval_minutes * 60
                         self._schedule_background_sync("hourly")
-                    elif ledger.get("unsynced_count", 0) > 0 and (now - self._last_heartbeat >= 60):
+                    elif unsynced > 0 and (now - self._last_heartbeat >= 60):
                         self._schedule_background_sync("unsynced_drain")
                 else:
                     self._set_ws_connected(False)

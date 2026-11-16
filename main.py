@@ -213,8 +213,12 @@ def on_violation(
         except Exception as e:
             print(f"❌ Alert dispatch error: {e}")
 
-    # Violations are queued in the local sync ledger and uploaded to the
-    # central server on the next hourly / on-demand batch sync.
+    # Auto-sync to Central Server whenever >= 5 unsynced snapshots accumulate locally
+    try:
+        if "edge_sync" in globals() and edge_sync:
+            edge_sync.notify_new_violation()
+    except Exception:
+        pass
 
 
 
@@ -232,6 +236,8 @@ def startup_event():
     # Start background edge synchronization with Central Fleet Server
     try:
         edge_sync.start()
+        # Automatically trigger sync if >= 5 unsynced snapshots exist on startup
+        edge_sync.notify_new_violation()
     except Exception as e:
         print(f"⚠️ [Edge Sync] Start warning: {e}")
 
