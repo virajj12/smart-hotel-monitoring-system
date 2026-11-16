@@ -31,9 +31,9 @@ class EdgeSyncManager:
     """Owns the duplex connection, heartbeat, batch sync, and remote commands."""
 
     HEARTBEAT_INTERVAL = 10
-    BATCH_LIMIT = 200
-    MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024
-    MAX_BATCH_SNAPSHOT_BYTES = 25 * 1024 * 1024
+    BATCH_LIMIT = 5
+    MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024
+    MAX_BATCH_SNAPSHOT_BYTES = 2 * 1024 * 1024
     DEFAULT_OWNER_ID = "OWN-DEFAULT-SYSTEM"
 
     def __init__(self, db, camera_manager):
@@ -118,6 +118,7 @@ class EdgeSyncManager:
             "kitchen_name": kitchen_name,
             "location": (location or "").strip(),
             "cameras_count": len(self.camera_manager.list_cameras()),
+            "cameras": self._get_cameras_telemetry(),
             "system_info": {
                 "hostname": platform.node(),
                 "platform": platform.platform(),
@@ -461,7 +462,7 @@ class EdgeSyncManager:
             incidents = []
             encoded_snapshot_bytes = 0
             for row in rows:
-                incident = self._build_incident(row)
+                incident, _ = self._build_incident(row, allow_direct_upload=False)
                 encoded_size = len(incident.get("snapshot_base64") or "")
                 if (
                     incidents
@@ -475,6 +476,7 @@ class EdgeSyncManager:
             ledger_before = self.db.get_sync_status()
             payload = {
                 "kitchen_id": self.kitchen_id,
+                "edge_id": self.kitchen_id,
                 "auth_token": self.auth_token,
                 "incidents": incidents,
                 "remaining_unsynced": max(
@@ -482,9 +484,13 @@ class EdgeSyncManager:
                 ),
             }
             response = self._post_json(
-                f"{self.central_url}/api/edge/batch_sync", payload, timeout=40
+                f"{self.central_url}/api/edge/batch_sync", payload, timeout=45
             )
-            synced_ids = response.get("synced_local_ids") or []
+            synced_ids = (
+                response.get("synced_ids")
+                or response.get("synced_local_ids")
+                or []
+            )
             marked = self.db.mark_violations_synced(synced_ids) if synced_ids else 0
             ledger = self.db.get_sync_status()
             result = {
@@ -493,12 +499,17 @@ class EdgeSyncManager:
                 "requested_count": len(incidents),
                 "synced_count": marked,
                 "unsynced_count": ledger["unsynced_count"],
-                "message": f"Central accepted {marked} of {len(incidents)} incidents",
+                "message": f"Central accepted {marked} of {len(incidents)} incidents ({ledger['unsynced_count']} remaining)",
             }
             with self._status_lock:
                 self._last_error = ""
             self._store_sync_result(result)
             print(f"[Edge Sync] {result['message']}")
+
+            # If more unsynced items exist, auto-trigger next batch in background to drain queue
+            if marked > 0 and ledger["unsynced_count"] > 0:
+                self._schedule_background_sync("drain")
+
             return result
         except Exception as exc:
             try:
@@ -559,39 +570,45 @@ class EdgeSyncManager:
                 "x-upsert": "true",
             }
             if requests is not None:
-                resp = requests.post(upload_url, data=raw_bytes, headers=headers, timeout=10)
+                resp = requests.post(upload_url, data=raw_bytes, headers=headers, timeout=3)
                 if resp.status_code in (200, 201):
                     return f"{supabase_url}/storage/v1/object/public/{supabase_bucket}/incidents/{filename}"
-                resp = requests.put(upload_url, data=raw_bytes, headers=headers, timeout=10)
+                resp = requests.put(upload_url, data=raw_bytes, headers=headers, timeout=3)
                 if resp.status_code in (200, 201):
                     return f"{supabase_url}/storage/v1/object/public/{supabase_bucket}/incidents/{filename}"
             else:
                 # Standard-library fallback
                 req = urllib.request.Request(upload_url, data=raw_bytes, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                with urllib.request.urlopen(req, timeout=3) as resp:
                     if resp.status in (200, 201):
                         return f"{supabase_url}/storage/v1/object/public/{supabase_bucket}/incidents/{filename}"
-        except Exception as exc:
-            print(f"[Edge Sync] Supabase direct upload error: {exc}")
+        except Exception:
+            pass
         return None
 
-    def _build_incident(self, row: dict) -> dict:
+    def _build_incident(self, row: dict, allow_direct_upload: bool = True) -> tuple[dict, bool]:
         camera_id = row.get("camera_id") or ""
         cam = self.camera_manager.get_camera(camera_id) if camera_id else None
         snapshot_path = row.get("snapshot_path")
         snapshot_url = None
         snapshot_b64 = None
+        direct_ok = allow_direct_upload
+        filename = None
 
         if snapshot_path and os.path.exists(snapshot_path):
             filename = os.path.basename(snapshot_path)
-            # 1. Attempt direct upload to Supabase Storage (bypasses 4.5MB Vercel limit)
-            snapshot_url = self._upload_snapshot_to_supabase(snapshot_path, filename)
-            # 2. Fallback to base64 only if Supabase direct upload is not configured
+            # 1. Attempt direct upload to Supabase Storage if allowed
+            if allow_direct_upload:
+                snapshot_url = self._upload_snapshot_to_supabase(snapshot_path, filename)
+                if not snapshot_url:
+                    direct_ok = False
+            # 2. Fallback to base64 so Central Server can upload or store
             if not snapshot_url:
                 snapshot_b64 = self._read_snapshot(snapshot_path)
 
-        return {
+        incident = {
             "local_id": row["id"],
+            "local_violation_id": row["id"],
             "camera_id": camera_id,
             "camera_name": cam.name if cam else (camera_id or "Unknown"),
             "label": row["label"],
@@ -599,9 +616,12 @@ class EdgeSyncManager:
             "timestamp": row["timestamp"],
             "confidence": row.get("confidence", 0.0),
             "amfv_ratio": row.get("amfv_ratio", 0.0),
+            "snapshot_filename": filename,
             "snapshot_url": snapshot_url,
             "snapshot_base64": snapshot_b64,
+            "snapshot_b64": snapshot_b64,
         }
+        return incident, direct_ok
 
     @classmethod
     def _read_snapshot(cls, snapshot_path: str | None) -> str | None:
@@ -947,7 +967,26 @@ class EdgeSyncManager:
             raise RuntimeError(f"Cannot reach central server: {exc.reason}") from exc
 
     @staticmethod
-    def _post_json(url: str, payload: dict, timeout: int = 10) -> dict:
+    def _post_json(url: str, payload: dict, timeout: int = 15) -> dict:
+        if requests is not None:
+            try:
+                resp = requests.post(
+                    url,
+                    json=payload,
+                    headers={"User-Agent": "SHMS-Edge/2.0"},
+                    timeout=timeout,
+                )
+                if resp.status_code >= 400:
+                    detail = ""
+                    try:
+                        detail = resp.json().get("detail", resp.text)
+                    except Exception:
+                        detail = resp.text
+                    raise RuntimeError(f"Central server returned HTTP {resp.status_code}: {detail}")
+                return resp.json() if resp.text else {}
+            except requests.RequestException as exc:
+                raise RuntimeError(f"Cannot reach central server: {exc}") from exc
+
         request = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
