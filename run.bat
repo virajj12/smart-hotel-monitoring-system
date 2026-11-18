@@ -68,7 +68,27 @@ if not exist "%~dp0.venv\Scripts\python.exe" (
     )
 )
 
-:: 3. Launch via run.py
+:: 3. Check and build frontend if missing
+if not exist "%~dp0frontend\dist\index.html" (
+    echo [!] Prebuilt dashboard not found in frontend\dist.
+    where npm >nul 2>&1
+    if !errorlevel! EQU 0 (
+        echo [i] Node.js/npm detected. Auto-building React dashboard...
+        pushd "%~dp0frontend"
+        if not exist "node_modules" (
+            echo [i] Installing npm packages...
+            call npm install
+        )
+        echo [i] Compiling production bundle (npm run build)...
+        call npm run build
+        popd
+        echo [✓] Frontend built successfully.
+    ) else (
+        echo [i] Note: Node.js/npm not found. Backend will serve setup page until built.
+    )
+)
+
+:: 4. Launch via run.py
 "%PYTHON_EXE%" run.py %*
 
 if %ERRORLEVEL% NEQ 0 (

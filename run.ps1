@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Smart Hotel Monitoring System (SHMS) - Edge Server PowerShell Launcher
 
@@ -92,11 +92,36 @@ if ($Install) {
     & $PythonExe -m pip install -r requirements.txt
 }
 
-# 4. Build argument list
+# 4. Check & Build Frontend Dashboard if missing
+$DistIndex = "$ScriptDir\frontend\dist\index.html"
+if (-not (Test-Path $DistIndex)) {
+    Write-Host "[!] Prebuilt dashboard not found at frontend\dist\index.html." -ForegroundColor Yellow
+    if (Get-Command "npm" -ErrorAction SilentlyContinue) {
+        Write-Host "[i] Node.js/npm detected. Auto-building React dashboard..." -ForegroundColor Cyan
+        Push-Location "$ScriptDir\frontend"
+        try {
+            if (-not (Test-Path "node_modules")) {
+                Write-Host "[i] Installing frontend dependencies (npm install)..." -ForegroundColor Yellow
+                & npm install
+            }
+            Write-Host "[i] Compiling production bundle (npm run build)..." -ForegroundColor Yellow
+            & npm run build
+            Write-Host "[✓] Frontend built successfully!" -ForegroundColor Green
+        } catch {
+            Write-Host "[!] Warning: npm build failed ($($_.Exception.Message)). Fallback UI will be served." -ForegroundColor Red
+        } finally {
+            Pop-Location
+        }
+    } else {
+        Write-Host "[i] Node.js/npm not found. Backend will serve diagnostic status page until built." -ForegroundColor Yellow
+    }
+}
+
+# 5. Build argument list
 $RunArgs = @("run.py", "--host", $HostAddress, "--port", $Port)
 if ($NoBrowser) { $RunArgs += "--no-browser" }
 if ($Reload) { $RunArgs += "--reload" }
 
-# 5. Execute
+# 6. Execute
 Write-Host "[✓] Launching Edge Server via $PythonExe..." -ForegroundColor Green
 & $PythonExe $RunArgs

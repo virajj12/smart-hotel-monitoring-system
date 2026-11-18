@@ -5,6 +5,12 @@ YOLOv8 violation detection, AMFV verification, SQLite persistence,
 and real-time web dashboard.
 """
 
+import os
+import sys
+
+# Isolate Ultralytics settings to local workspace to prevent Windows AppData permission issues
+os.environ.setdefault("YOLO_CONFIG_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), ".yolo"))
+
 from fastapi import FastAPI, Request, HTTPException, Body
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response, FileResponse
 from fastapi.middleware.cors import CORSMiddleware

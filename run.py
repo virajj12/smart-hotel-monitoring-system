@@ -19,6 +19,7 @@ from pathlib import Path
 
 # Base directories
 BASE_DIR = Path(__file__).resolve().parent
+os.environ.setdefault("YOLO_CONFIG_DIR", str(BASE_DIR / ".yolo"))
 FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
 ENV_FILE = BASE_DIR / ".env"
 ENV_EXAMPLE = BASE_DIR / ".env.example"
@@ -94,7 +95,23 @@ def preflight_checks():
 
     # 4. Check Frontend build
     if not (FRONTEND_DIST / "index.html").exists():
-        print(f"{YELLOW}[!] Warning: frontend/dist/index.html not found. UI may need 'npm run build' in frontend/{RESET}")
+        print(f"{YELLOW}[!] Prebuilt dashboard not found in frontend/dist/index.html.{RESET}")
+        npm_bin = shutil.which("npm")
+        if npm_bin:
+            print(f"{CYAN}[i] Node.js/npm detected. Auto-building React dashboard...{RESET}")
+            frontend_dir = BASE_DIR / "frontend"
+            try:
+                import subprocess
+                if not (frontend_dir / "node_modules").exists():
+                    print(f"{YELLOW}[i] Running npm install in frontend/...{RESET}")
+                    subprocess.run(["npm", "install"], cwd=frontend_dir, check=True, shell=True)
+                print(f"{YELLOW}[i] Running npm run build in frontend/...{RESET}")
+                subprocess.run(["npm", "run", "build"], cwd=frontend_dir, check=True, shell=True)
+                print(f"{GREEN}[✓] Frontend compiled successfully to frontend/dist!{RESET}")
+            except Exception as e:
+                print(f"{RED}[✗] Failed to auto-build frontend: {e}{RESET}")
+        else:
+            print(f"{YELLOW}[i] Node.js/npm not found. Backend will serve diagnostic setup page.{RESET}")
     else:
         print(f"{GREEN}[✓] Prebuilt React Dashboard found at frontend/dist{RESET}")
 

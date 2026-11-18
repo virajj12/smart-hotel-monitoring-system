@@ -14,5 +14,9 @@ hotel_monitoring.db*
 .edge_identity.json
 .edge_credentials.json
 .venv/
+.yolo/
 node_modules/
-dist/
+# Allow prebuilt frontend dist so edge servers run out-of-the-box without Node.js
+/dist/
+!frontend/dist/
+!frontend/dist/**
