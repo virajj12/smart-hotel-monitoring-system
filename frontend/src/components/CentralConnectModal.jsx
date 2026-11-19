@@ -282,11 +282,11 @@ export default function CentralConnectModal({ isOpen, onClose, onStatusChange })
 
           <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
-            <Label className="text-xs text-zinc-300">Owner / Organization ID</Label>
+            <Label className="text-xs text-zinc-300">Hotel Endpoint / Owner ID</Label>
             <Input
               value={ownerId}
               onChange={(event) => setOwnerId(event.target.value)}
-              placeholder="OWN-MARRIOTT-8492"
+              placeholder="e.g. ritz-carlton or OWN-DEFAULT-SYSTEM"
               className="h-8 text-xs bg-zinc-900 border-zinc-800 text-white"
               required
             />
