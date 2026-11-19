@@ -63,7 +63,7 @@ class EdgeSyncManager:
         self.db = db
         self.camera_manager = camera_manager
         self.central_url = (
-            self.db.get_setting("central_url", os.getenv("CENTRAL_SERVER_URL", "http://127.0.0.1:9000"))
+            self.db.get_setting("central_url", os.getenv("CENTRAL_SERVER_URL", "https://shms-central-server.vercel.app"))
             or ""
         ).rstrip("/")
         self.kitchen_id = self.db.get_setting("kitchen_id", "") or ""
@@ -200,6 +200,17 @@ class EdgeSyncManager:
         if not hotel_name or not kitchen_name:
             raise ValueError("Hotel name and kitchen name are required")
 
+        # Branch-aware identity check:
+        # If this device is being registered for a DIFFERENT hotel branch or kitchen than
+        # the stored identity (e.g. from a cloned repo/database or re-assigning branch),
+        # do NOT send the old kitchen_id or auth_token so Central generates a distinct node ID.
+        is_same_branch = (
+            bool(self.hotel_name)
+            and bool(self.kitchen_name)
+            and self.hotel_name.strip().lower() == hotel_name.lower()
+            and self.kitchen_name.strip().lower() == kitchen_name.lower()
+        )
+
         payload = {
             "owner_id": (owner_id or self.owner_id or self.DEFAULT_OWNER_ID).strip(),
             "hotel_name": hotel_name,
@@ -213,9 +224,9 @@ class EdgeSyncManager:
                 "python": platform.python_version(),
             },
         }
-        if self.kitchen_id:
+        if is_same_branch and self.kitchen_id:
             payload["kitchen_id"] = self.kitchen_id
-        if self.auth_token:
+        if is_same_branch and self.auth_token:
             payload["auth_token"] = self.auth_token
 
         # Stable machine identity
@@ -232,7 +243,7 @@ class EdgeSyncManager:
             payload["api_url"] = api_url
 
         response = self._post_json(
-            f"{central_url}/api/edge/request_connection", payload, timeout=10
+            f"{central_url}/api/edge/request_connection", payload, timeout=30
         )
         status_value = str(response.get("status") or "approved").lower()
         request_id = str(response.get("request_id") or "")
@@ -322,7 +333,7 @@ class EdgeSyncManager:
         while time.monotonic() < deadline:
             try:
                 status_response = self._get_json(
-                    f"{central_url}/api/edge/connection_status/{request_id}", timeout=5
+                    f"{central_url}/api/edge/connection_status/{request_id}", timeout=15
                 )
                 status_value = str(status_response.get("status") or "pending").lower()
                 if status_value in ("rejected", "revoked"):
@@ -337,7 +348,7 @@ class EdgeSyncManager:
                     if not status_response.get("auth_token"):
                         credentials = self._get_json(
                             f"{central_url}/api/edge/enrollment/{request_id}/credentials",
-                            timeout=5,
+                            timeout=15,
                         )
                         status_response = {**status_response, **credentials}
                     self._apply_enrollment(
@@ -1065,13 +1076,38 @@ class EdgeSyncManager:
         self._set_ws_connected(False)
 
     @staticmethod
-    def _get_json(url: str, timeout: int = 10) -> dict:
+    def _get_json(url: str, timeout: int = 30) -> dict:
+        if requests is not None:
+            for attempt in range(2):
+                try:
+                    resp = requests.get(
+                        url,
+                        headers={"User-Agent": "SHMS-Edge/2.0"},
+                        timeout=timeout,
+                    )
+                    if resp.status_code >= 400:
+                        detail = ""
+                        try:
+                            detail = resp.json().get("detail", resp.text)
+                        except Exception:
+                            detail = resp.text
+                        raise RuntimeError(f"Central server returned HTTP {resp.status_code}: {detail}")
+                    return resp.json() if resp.text else {}
+                except requests.exceptions.Timeout as exc:
+                    if attempt == 0:
+                        print(f"[Edge Sync] GET request timed out to {url}, retrying once...")
+                        time.sleep(1)
+                        continue
+                    raise RuntimeError(f"Cannot reach central server: {exc}") from exc
+                except requests.RequestException as exc:
+                    raise RuntimeError(f"Cannot reach central server: {exc}") from exc
+
         request = urllib.request.Request(
             url,
             method="GET",
             headers={
                 "Content-Type": "application/json",
-                "User-Agent": "SmartHotelMonitor/2.0",
+                "User-Agent": "SHMS-Edge/2.0",
             },
         )
         try:
@@ -1090,25 +1126,32 @@ class EdgeSyncManager:
             raise RuntimeError(f"Cannot reach central server: {exc.reason}") from exc
 
     @staticmethod
-    def _post_json(url: str, payload: dict, timeout: int = 15) -> dict:
+    def _post_json(url: str, payload: dict, timeout: int = 30) -> dict:
         if requests is not None:
-            try:
-                resp = requests.post(
-                    url,
-                    json=payload,
-                    headers={"User-Agent": "SHMS-Edge/2.0"},
-                    timeout=timeout,
-                )
-                if resp.status_code >= 400:
-                    detail = ""
-                    try:
-                        detail = resp.json().get("detail", resp.text)
-                    except Exception:
-                        detail = resp.text
-                    raise RuntimeError(f"Central server returned HTTP {resp.status_code}: {detail}")
-                return resp.json() if resp.text else {}
-            except requests.RequestException as exc:
-                raise RuntimeError(f"Cannot reach central server: {exc}") from exc
+            for attempt in range(2):
+                try:
+                    resp = requests.post(
+                        url,
+                        json=payload,
+                        headers={"User-Agent": "SHMS-Edge/2.0"},
+                        timeout=timeout,
+                    )
+                    if resp.status_code >= 400:
+                        detail = ""
+                        try:
+                            detail = resp.json().get("detail", resp.text)
+                        except Exception:
+                            detail = resp.text
+                        raise RuntimeError(f"Central server returned HTTP {resp.status_code}: {detail}")
+                    return resp.json() if resp.text else {}
+                except requests.exceptions.Timeout as exc:
+                    if attempt == 0:
+                        print(f"[Edge Sync] POST request timed out to {url}, retrying once on warm serverless instance...")
+                        time.sleep(1)
+                        continue
+                    raise RuntimeError(f"Cannot reach central server: {exc}") from exc
+                except requests.RequestException as exc:
+                    raise RuntimeError(f"Cannot reach central server: {exc}") from exc
 
         request = urllib.request.Request(
             url,

@@ -24,7 +24,7 @@ import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { api } from '../services/api';
 
-const DEFAULT_CENTRAL_URL = 'http://127.0.0.1:9000';
+const DEFAULT_CENTRAL_URL = 'https://shms-central-server.vercel.app';
 
 export default function CentralConnectModal({ isOpen, onClose, onStatusChange }) {
   const [centralUrl, setCentralUrl] = useState(DEFAULT_CENTRAL_URL);
