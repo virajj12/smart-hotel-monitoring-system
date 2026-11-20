@@ -15,6 +15,7 @@ import { Slider } from './ui/slider';
 import { Switch } from './ui/switch';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
+import { toast } from './ui/sonner';
 import { api } from '../services/api';
 
 export default function SettingsModal({ isOpen, onClose }) {
@@ -76,12 +77,13 @@ export default function SettingsModal({ isOpen, onClose }) {
         webhook_url: webhook,
       });
       setSavedSuccess(true);
+      toast.success('Surveillance parameters saved successfully');
       setTimeout(() => {
         setSavedSuccess(false);
         onClose();
       }, 900);
     } catch (err) {
-      alert(`Failed to save settings: ${err.message}`);
+      toast.error(`Failed to save settings: ${err.message}`);
     } finally {
       setSaving(false);
     }

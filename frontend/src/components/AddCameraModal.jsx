@@ -13,6 +13,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
+import { toast } from './ui/sonner';
 import { api } from '../services/api';
 
 const RTSP_PRESETS = {
@@ -118,10 +119,11 @@ export default function AddCameraModal({ isOpen, onClose, onCameraAdded }) {
       }
 
       await api.addCamera(payload);
+      toast.success(`Camera "${payload.name}" attached successfully!`);
       onCameraAdded();
       onClose();
     } catch (err) {
-      alert(`Failed to add camera: ${err.message}`);
+      toast.error(`Failed to add camera: ${err.message}`);
     } finally {
       setSubmitting(false);
     }

@@ -22,6 +22,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
+import { toast } from './ui/sonner';
 import { api } from '../services/api';
 
 const DEFAULT_CENTRAL_URL = 'https://shms-central-server.vercel.app';
@@ -101,14 +102,17 @@ export default function CentralConnectModal({ isOpen, onClose, onStatusChange })
       });
       applyStatus(data);
       if (data.status === 'pending') {
-        setMessage(
-          `Awaiting approval from the administrator of ${ownerId}. Verification PIN: ${data.pin || 'check central portal'}`
-        );
+        const msg = `Awaiting approval from the administrator of ${ownerId}. Verification PIN: ${data.pin || 'check central portal'}`;
+        setMessage(msg);
+        toast.info(msg);
       } else {
-        setMessage(`Connected as ${data.kitchen_id || 'edge node'}`);
+        const msg = `Connected as ${data.kitchen_id || 'edge node'}`;
+        setMessage(msg);
+        toast.success(msg);
       }
     } catch (err) {
       setError(err.message);
+      toast.error(`Connection failed: ${err.message}`);
     } finally {
       setConnecting(false);
     }
@@ -121,18 +125,21 @@ export default function CentralConnectModal({ isOpen, onClose, onStatusChange })
     try {
       const result = await api.syncCentralNow();
       if (result.success) {
-        setMessage(
-          result.synced_count > 0
-            ? `Synced ${result.synced_count} incident(s)`
-            : result.message || 'Everything is already synced'
-        );
+        const msg = result.synced_count > 0
+          ? `Synced ${result.synced_count} incident(s) to cloud`
+          : result.message || 'All incidents are already synced';
+        setMessage(msg);
+        toast.success(msg);
       } else {
-        setError(result.error || 'Sync failed');
+        const err = result.error || 'Sync failed';
+        setError(err);
+        toast.error(err);
       }
       const data = await api.getCentralStatus();
       applyStatus(data);
     } catch (err) {
       setError(err.message);
+      toast.error(`Sync error: ${err.message}`);
     } finally {
       setSyncing(false);
     }

@@ -12,6 +12,7 @@ import CentralConnectModal from './components/CentralConnectModal';
 
 import { api } from './services/api';
 import { Badge } from './components/ui/badge';
+import { toast } from './components/ui/sonner';
 import { X } from 'lucide-react';
 
 export default function App() {
@@ -102,8 +103,9 @@ export default function App() {
       });
       await fetchCameras();
       await fetchTelemetry();
+      toast.success('Kitchen CCTV demo stream loaded');
     } catch (err) {
-      alert(`Failed to load demo video: ${err.message}`);
+      toast.error(`Failed to load demo video: ${err.message}`);
     }
   };
 
@@ -115,8 +117,9 @@ export default function App() {
       if (focusedCamId === id) setFocusedCamId(null);
       fetchCameras();
       fetchTelemetry();
+      toast.success('Camera stream removed successfully');
     } catch (err) {
-      alert(`Failed to remove camera: ${err.message}`);
+      toast.error(`Failed to remove camera: ${err.message}`);
     }
   };
 
@@ -125,13 +128,15 @@ export default function App() {
     try {
       await api.clearLogs(selectedCameraId);
       fetchTelemetry();
+      toast.success('Incident logs cleared');
     } catch (err) {
-      alert(`Failed to clear logs: ${err.message}`);
+      toast.error(`Failed to clear logs: ${err.message}`);
     }
   };
 
   const handleExportCsv = () => {
     window.open(api.getCsvExportUrl(selectedCameraId), '_blank');
+    toast.info('Downloading incident audit CSV...');
   };
 
   return (
